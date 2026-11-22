@@ -348,23 +348,24 @@ TSG.DeleteStructureRemote = (keyedRemotes and rawget(keyedRemotes, "deleteStruct
 TSG.HitStructureRemote = (keyedRemotes and rawget(keyedRemotes, "hitStructure")) or (interactionsFolder and interactionsFolder:FindFirstChild("hitStructure")) or resolvePath(ReplicatedStorage, "remoteInterface", "interactions", "hitStructure")
 TSG.CreateFarmlandRemote = (keyedRemotes and rawget(keyedRemotes, "createFarmland")) or (interactionsFolder and interactionsFolder:FindFirstChild("createFarmland"))
 
--- No Bear Trap DMG remote (intercepted via the __namecall hook below)
+-- No Bear Trap DMG remote. The intercept is registered with the shared
+-- __namecall dispatcher below only while the toggle is on, so there is no
+-- always-installed wrapper for it.
 local TrapRunEvent = resolvePath(ReplicatedStorage, "remoteInterface", "traps", "Run") or (ReplicatedStorage:FindFirstChild("remoteInterface") and ReplicatedStorage.remoteInterface:FindFirstChild("traps") and ReplicatedStorage.remoteInterface.traps:FindFirstChild("Run"))
 
-if hookmetamethod then
-	local bearTrapOriginal
-	bearTrapOriginal = hookmetamethod(game, "__namecall", function(...)
+-- Called as handler(previous, ...) by the dispatcher. Global on purpose: the
+-- main chunk is at Luau's 200-local register limit.
+function TSG_BearTrapNamecall(previous, ...)
+	if getnamecallmethod() == "InvokeServer" then
 		local self = ...
-		local method = getnamecallmethod()
-
-		if method == "InvokeServer" and TrapRunEvent and rawequal(self, TrapRunEvent) then
+		if TrapRunEvent and rawequal(self, TrapRunEvent) then
 			if Toggles.NoBearTrapDMG and Toggles.NoBearTrapDMG.Value then
 				return nil
 			end
 		end
+	end
 
-		return bearTrapOriginal(...)
-	end)
+	return previous(...)
 end
 
 
@@ -409,6 +410,100 @@ local function disconnect(name)
 		Connections[name] = nil
 	end
 end
+
+-- ==========================================
+-- SHARED __namecall DISPATCHER + PLAYER LIST
+-- ==========================================
+-- Hooking game.__namecall is the most invasive thing this script does: while it
+-- is installed the wrapper runs on EVERY method call the whole game makes.
+-- Stacking three separate wrappers at load (bear trap, boss damage / hit
+-- feedback, silent aim) meant three extra Lua calls plus three
+-- getnamecallmethod() calls per method call even with every feature switched
+-- off. Each feature now registers its handler here only while it is active and
+-- the chain is rebuilt, so with nothing enabled the game's own metamethod is
+-- left completely untouched.
+-- Globals on purpose: the main chunk is at Luau's 200-local register limit.
+TSG_NamecallBase = nil    -- the game's untouched metamethod
+TSG_NamecallTop = nil     -- whatever wrapper is installed right now
+TSG_NamecallHooks = {}    -- active handlers, called as handler(original, ...)
+
+function TSG_NamecallAvailable()
+	return hookmetamethod ~= nil and getnamecallmethod ~= nil
+end
+
+-- Captures the game's own metamethod once, so the chain can always be rebuilt
+-- from the bottom no matter which feature is switched off first.
+function TSG_CaptureNamecallBase()
+	if TSG_NamecallBase then return true end
+	if not TSG_NamecallAvailable() then return false end
+	local original
+	original = hookmetamethod(game, "__namecall", function(...)
+		return original(...)
+	end)
+	hookmetamethod(game, "__namecall", original)
+	TSG_NamecallBase = original
+	TSG_NamecallTop = original
+	return true
+end
+
+function TSG_RebuildNamecall()
+	if not TSG_NamecallBase then return end
+	local chain = TSG_NamecallBase
+	for _, handler in ipairs(TSG_NamecallHooks) do
+		local previous = chain
+		chain = function(...)
+			return handler(previous, ...)
+		end
+	end
+	if chain ~= TSG_NamecallTop then
+		TSG_NamecallTop = chain
+		hookmetamethod(game, "__namecall", chain)
+	end
+end
+
+function TSG_AddNamecallHook(handler)
+	if not TSG_CaptureNamecallBase() then return end
+	if table.find(TSG_NamecallHooks, handler) then return end
+	table.insert(TSG_NamecallHooks, handler)
+	TSG_RebuildNamecall()
+end
+
+function TSG_RemoveNamecallHook(handler)
+	local index = table.find(TSG_NamecallHooks, handler)
+	if not index then return end
+	table.remove(TSG_NamecallHooks, index)
+	TSG_RebuildNamecall()
+end
+
+-- One shared player list. Players:GetPlayers() allocates a brand new table on
+-- every call and the combat loops call it every frame, so this keeps a single
+-- table up to date from the join / leave events instead.
+-- Globals on purpose: the main chunk is at Luau's 200-local register limit.
+TSG_PlayerList = {}
+
+function TSG_RefreshPlayerList()
+	local list = {}
+	local players = Players:GetPlayers()
+	for i = 1, #players do
+		list[i] = players[i]
+	end
+	TSG_PlayerList = list
+end
+
+TSG_RefreshPlayerList()
+
+track("TSG_PlayerListAdded", Players.PlayerAdded:Connect(function(player)
+	table.insert(TSG_PlayerList, player)
+end))
+
+track("TSG_PlayerListRemoving", Players.PlayerRemoving:Connect(function(player)
+	local list = TSG_PlayerList
+	for i = #list, 1, -1 do
+		if list[i] == player then
+			table.remove(list, i)
+		end
+	end
+end))
 
 -- ==========================================
 -- MAIN
@@ -1794,6 +1889,17 @@ Options.HitEffectSelect:OnChanged(function(value)
 			Time = 3,
 		})
 	end
+	TSG_SyncBossHitHook()
+end)
+
+-- The hit sound lives behind the shared boss/hit __namecall wrapper, so these
+-- two only need to keep that wrapper installed while a sound is actually picked.
+Toggles.HitSound:OnChanged(function()
+	TSG_SyncBossHitHook()
+end)
+
+Options.HitSoundSelect:OnChanged(function()
+	TSG_SyncBossHitHook()
 end)
 
 MiscGroup:AddDivider()
@@ -1899,7 +2005,7 @@ Xeno_PlayHitEffect = function(hitArgs)
 
 		if not position and selfRoot then
 			local closest, closestDist
-			for _, p in ipairs(AimlockPlayers or Players:GetPlayers()) do
+			for _, p in ipairs(AimlockPlayers or TSG_PlayerList) do
 				if p ~= LocalPlayer and p.Character then
 					local r = p.Character:FindFirstChild("HumanoidRootPart")
 					if r then
@@ -3798,7 +3904,7 @@ TeleportGroup:AddButton({
 
 		local matchedPlayers = {}
 
-		for _, targetPlayer in ipairs(game.Players:GetPlayers()) do
+		for _, targetPlayer in ipairs(TSG_PlayerList) do
 			if targetPlayer ~= player and (targetPlayer.Name:lower():sub(1, #savedName) == savedName:lower() or targetPlayer.DisplayName:lower():sub(1, #savedName) == savedName:lower()) then
 				table.insert(matchedPlayers, targetPlayer)
 			end
@@ -4390,7 +4496,7 @@ do
 	end
 
 	local function removeAllChams()
-		for _, plr in ipairs(Players:GetPlayers()) do
+		for _, plr in ipairs(TSG_PlayerList) do
 			removeCham(plr.Character)
 		end
 	end
@@ -4444,7 +4550,7 @@ do
 		end
 	end
 
-	for _, plr in ipairs(Players:GetPlayers()) do
+	for _, plr in ipairs(TSG_PlayerList) do
 		watchPlayer(plr)
 	end
 	Players.PlayerAdded:Connect(watchPlayer)
@@ -4468,7 +4574,7 @@ do
 			return
 		end
 
-		for _, plr in ipairs(Players:GetPlayers()) do
+		for _, plr in ipairs(TSG_PlayerList) do
 			if isAdmin(plr) and plr.Character then
 				applyCham(plr.Character)
 			end
@@ -4493,7 +4599,7 @@ do
 	end
 
 	local function getAdminSpectatingMe()
-		for _, admin in ipairs(Players:GetPlayers()) do
+		for _, admin in ipairs(TSG_PlayerList) do
 			if admin ~= LocalPlayer and isAdmin(admin) then
 				local ok, attrs = pcall(function() return admin:GetAttributes() end)
 				if ok and type(attrs) == "table" then
@@ -4558,7 +4664,7 @@ do
 	if Toggles.ServerHopOnAdmin then
 		Toggles.ServerHopOnAdmin:OnChanged(function()
 			if Toggles.ServerHopOnAdmin.Value then
-				for _, plr in ipairs(Players:GetPlayers()) do
+				for _, plr in ipairs(TSG_PlayerList) do
 					if plr ~= LocalPlayer and isAdmin(plr) then
 						local adminName = getAdminName(plr)
 						Library:Notify({ Title = "ADMIN PRESENT", Description = adminName .. " is already in the server!", Time = 5 })
@@ -4734,8 +4840,10 @@ end)
 
 Toggles.NoBearTrapDMG:OnChanged(function()
 	if Toggles.NoBearTrapDMG.Value then
+		TSG_AddNamecallHook(TSG_BearTrapNamecall)
 		Library:Notify({ Title = "No Bear Trap DMG", Description = "Enabled", Time = 2 })
 	else
+		TSG_RemoveNamecallHook(TSG_BearTrapNamecall)
 		Library:Notify({ Title = "No Bear Trap DMG", Description = "Disabled", Time = 2 })
 	end
 end)
@@ -4887,44 +4995,67 @@ track("CharacterModuleRespawn", LocalPlayer.CharacterAdded:Connect(function()
 	end
 end))
 
--- Boss damage blocking + hit sound hook.
+-- Boss damage blocking + hit feedback. Both share one wrapper, which the shared
+-- dispatcher only installs while at least one of them is active.
 local BossDamageEvent = resolvePath(ReplicatedStorage, "remoteInterface", "character", "hurtByAIAttack")
-if hookmetamethod then
-	local namecallOriginal
-	namecallOriginal = hookmetamethod(game, "__namecall", function(...)
-		local self = ...
-		local method = getnamecallmethod()
 
-		if method == "FireServer" and BossDamageEvent and rawequal(self, BossDamageEvent) then
-			if Toggles.NoBossDamage and Toggles.NoBossDamage.Value then
-				return -- Block the attack to prevent damage
-			end
+-- Called as handler(previous, ...). Global on purpose: the main chunk is at
+-- Luau's 200-local register limit.
+function TSG_BossHitNamecall(previous, ...)
+	local self = ...
+	local method = getnamecallmethod()
+
+	if method == "FireServer" and BossDamageEvent and rawequal(self, BossDamageEvent) then
+		if Toggles.NoBossDamage and Toggles.NoBossDamage.Value then
+			return -- Block the attack to prevent damage
 		end
+	end
 
-		if (method == "FireServer" or method == "InvokeServer") then
-			local isMeleeHit = rawequal(self, TSG.MeleePlayerRemote)
-				or rawequal(self, TSG.MeleeAI)
-				or rawequal(self, TSG.MeleeAnimalRemote)
-			if isMeleeHit then
-				local hitArgs = table.pack(select(2, ...))
-				task.defer(function()
-					pcall(function()
-						if Xeno_PlayHitSound then
-							Xeno_PlayHitSound()
-						end
-						if Xeno_PlayHitEffect then
-							Xeno_PlayHitEffect(hitArgs)
-						end
-					end)
+	if (method == "FireServer" or method == "InvokeServer") then
+		local isMeleeHit = rawequal(self, TSG.MeleePlayerRemote)
+			or rawequal(self, TSG.MeleeAI)
+			or rawequal(self, TSG.MeleeAnimalRemote)
+		if isMeleeHit then
+			local hitArgs = table.pack(select(2, ...))
+			task.defer(function()
+				pcall(function()
+					if Xeno_PlayHitSound then
+						Xeno_PlayHitSound()
+					end
+					if Xeno_PlayHitEffect then
+						Xeno_PlayHitEffect(hitArgs)
+					end
 				end)
-			end
+			end)
 		end
+	end
 
-		return namecallOriginal(...)
-	end)
+	return previous(...)
+end
+
+-- True while the hit sound or hit effect would actually do something, so the
+-- wrapper is not kept installed for a selection that is effectively off.
+function TSG_HitFeedbackActive()
+	if Toggles.HitSound and Toggles.HitSound.Value then
+		local sound = Options.HitSoundSelect and Options.HitSoundSelect.Value
+		if sound and sound ~= "None" then return true end
+	end
+	local effect = Options.HitEffectSelect and Options.HitEffectSelect.Value
+	return effect ~= nil and effect ~= "None"
+end
+
+-- Registers the shared wrapper only while the boss blocker or the hit feedback
+-- needs it, so with all three off the game's metamethod is left untouched.
+function TSG_SyncBossHitHook()
+	if (Toggles.NoBossDamage and Toggles.NoBossDamage.Value) or TSG_HitFeedbackActive() then
+		TSG_AddNamecallHook(TSG_BossHitNamecall)
+	else
+		TSG_RemoveNamecallHook(TSG_BossHitNamecall)
+	end
 end
 
 local function noBossDamageToggle(state)
+	TSG_SyncBossHitHook()
 	if state then
 		Library:Notify({ Title = "No Boss Damage", Description = "Enabled", Time = 2 })
 	else
@@ -6662,7 +6793,7 @@ local function updateImmortalMode()
 	-- Ignore Team is baked into Infinite Shield: teammates are never targeted.
 	local ignoreTeam = true
 
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player ~= LocalPlayer and player.Character then
 			if not ignoreTeam or not isTeammate(player) then
 				local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
@@ -7069,7 +7200,7 @@ do
 
 		local threat = false
 		local maxDist = getParryDistance()
-		for _, player in ipairs(Players:GetPlayers()) do
+		for _, player in ipairs(TSG_PlayerList) do
 			if player ~= LocalPlayer and player.Character and not isTeammate(player) then
 				if isEnemySwinging(player.Character, root.Position, maxDist) then
 					threat = true
@@ -7299,7 +7430,7 @@ local function killAuraLoop()
 	local crosshairTarget = nil
 
 	-- Scan Players
-	for _, otherPlayer in ipairs(Players:GetPlayers()) do
+	for _, otherPlayer in ipairs(TSG_PlayerList) do
 		if otherPlayer ~= LocalPlayer and otherPlayer.Character then
 			local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
 			local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
@@ -7515,7 +7646,7 @@ Toggles.SmartSwing:OnChanged(function()
 			local ignoreTeam = Toggles.SmartSwingIgnoreTeam and Toggles.SmartSwingIgnoreTeam.Value
 			local playerNearby = false
 
-			for _, otherPlayer in ipairs(Players:GetPlayers()) do
+			for _, otherPlayer in ipairs(TSG_PlayerList) do
 				if otherPlayer ~= LocalPlayer and otherPlayer.Character then
 					if not ignoreTeam or not isTeammate(otherPlayer) then
 						local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
@@ -7559,7 +7690,7 @@ do
 	AimlockPlayers = {}
 	function refreshAimlockPlayers()
 		local list = {}
-		for _, p in ipairs(Players:GetPlayers()) do
+		for _, p in ipairs(TSG_PlayerList) do
 			if p ~= LocalPlayer then
 				table.insert(list, p)
 			end
@@ -7749,7 +7880,7 @@ Toggles.Camlock:OnChanged(function()
 		local camlockPlayers = {}
 		local function refreshCamlockPlayers()
 			local list = {}
-			for _, p in ipairs(Players:GetPlayers()) do
+			for _, p in ipairs(TSG_PlayerList) do
 				if p ~= LocalPlayer then
 					table.insert(list, p)
 				end
@@ -8467,7 +8598,7 @@ if Toggles.AutoJump then
 				-- Ignoring team is built in: Auto Jump only mirrors nearby enemies.
 				local myPos = myRoot.Position
 
-				for _, p in ipairs(Players:GetPlayers()) do
+				for _, p in ipairs(TSG_PlayerList) do
 					if p ~= LocalPlayer and p.Character then
 						if not isTeammate(p) then
 							local otherRoot = p.Character:FindFirstChild("HumanoidRootPart")
@@ -8524,7 +8655,7 @@ local function getClosestPlayerInRange()
 	local closestDistance = math.huge
 	local targetSetting = Options.KillAuraTarget and Options.KillAuraTarget.Value or "All"
 
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
 			if targetSetting == "All" or player.Name == targetSetting then
 				local targetRoot = player.Character.HumanoidRootPart
@@ -8720,7 +8851,7 @@ local function connectReachTool(tool)
 				local targetsToHit = {}
 
 				-- Scan Players
-				for _, otherPlayer in ipairs(Players:GetPlayers()) do
+				for _, otherPlayer in ipairs(TSG_PlayerList) do
 					if otherPlayer ~= LocalPlayer and otherPlayer.Character then
 						if reachTargetSetting == "All" or otherPlayer.Name == reachTargetSetting then
 							local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -8833,7 +8964,6 @@ setupReachTracking()
 -- All state lives on one global table to stay clear of the main chunk's local
 -- register budget.
 SilentAimHK.Supported = (hookmetamethod ~= nil and getnamecallmethod ~= nil and checkcaller ~= nil)
-SilentAimHK.OriginalNamecall = nil
 SilentAimHK.MouseHook = nil
 SilentAimHK.CachedMouse = nil
 SilentAimHK.RemoteNameCache = nil
@@ -8985,14 +9115,32 @@ function SilentAimHK.getRemoteNames()
 	return names
 end
 
+-- The name of every remote the game fires used to be lowercased and scanned
+-- against every pattern on each intercepted call. Remote names are few and
+-- stable, so the lowercase + match result is memoised and only rebuilt when the
+-- pattern list itself changes.
+SilentAimHK.MatchCache = nil
+
 function SilentAimHK.matchesRemote(name)
-	local lower = string.lower(name)
-	for _, pattern in ipairs(SilentAimHK.getRemoteNames()) do
-		if string.find(lower, pattern, 1, true) then
-			return true
-		end
+	local names = SilentAimHK.getRemoteNames()
+	local cache = SilentAimHK.MatchCache
+	if not cache or cache.names ~= names then
+		cache = { names = names, hits = {} }
+		SilentAimHK.MatchCache = cache
 	end
-	return false
+	local hit = cache.hits[name]
+	if hit == nil then
+		local lower = string.lower(name)
+		hit = false
+		for i = 1, #names do
+			if string.find(lower, names[i], 1, true) then
+				hit = true
+				break
+			end
+		end
+		cache.hits[name] = hit
+	end
+	return hit
 end
 
 -- Picks the body part to aim at for a character, honouring the Target Part
@@ -9064,7 +9212,7 @@ function SilentAimHK.findTarget()
 	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	local bestPart, bestScore = nil, math.huge
 
-	for _, otherPlayer in ipairs(Players:GetPlayers()) do
+	for _, otherPlayer in ipairs(TSG_PlayerList) do
 		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer) then
 			local otherChar = otherPlayer.Character
 			local humanoid = otherChar and otherChar:FindFirstChildOfClass("Humanoid")
@@ -9279,10 +9427,10 @@ function SilentAimHK.rewriteValue(val, keyHint, targetPos, hitPart, bulletTelepo
 	return val
 end
 
--- The __namecall hook. Installed once at load and kept inert until the feature
--- is switched on, so it costs one table lookup per call while disabled.
-function SilentAimHK.Namecall(...)
-	local original = SilentAimHK.OriginalNamecall
+-- The __namecall wrapper. The shared dispatcher calls it as
+-- handler(previous, ...) and only registers it while silent aim is armed, so it
+-- does not cost anything at all while the feature is off.
+function SilentAimHK.Namecall(original, ...)
 	if not original then return end
 	if not SilentAimHK.isEnabled() then
 		return original(...)
@@ -9507,12 +9655,9 @@ function SilentAimHK.scanRemotes()
 	return list
 end
 
--- Install the hook once. It stays inert while the feature is off.
-if hookmetamethod and getnamecallmethod and checkcaller then
-	SilentAimHK.OriginalNamecall = hookmetamethod(game, "__namecall", function(...)
-		return SilentAimHK.Namecall(...)
-	end)
-else
+-- The wrapper is registered with the shared dispatcher from SilentAimHK.sync()
+-- only while silent aim is armed, so nothing is installed at load.
+if not (hookmetamethod and getnamecallmethod and checkcaller) then
 	warn("[URIEL]: Silent Aim needs hookmetamethod, getnamecallmethod and checkcaller")
 end
 
@@ -9542,6 +9687,16 @@ function SilentAimHK.sync()
 	local armed = SilentAimHK.armed()
 	if armed == SilentAimHK.connected then return end
 	SilentAimHK.connected = armed
+	-- The __namecall wrapper only exists while silent aim is armed. Registering
+	-- it here (and removing it below) is what keeps the game's metamethod
+	-- untouched the rest of the time.
+	if armed then
+		if SilentAimHK.Supported then
+			TSG_AddNamecallHook(SilentAimHK.Namecall)
+		end
+	else
+		TSG_RemoveNamecallHook(SilentAimHK.Namecall)
+	end
 	disconnect("SilentAimHKLoop")
 	disconnect("SilentAimHKAnim")
 	SilentAimHK.syncMouseHook()
@@ -12883,7 +13038,7 @@ TSG_AntiLagGroup = Tabs.Visuals:AddRightGroupbox("ANTI-LAG PLUS", "wind")
 
 -- ==========================================
 local function setPlayerShadows(castShadow)
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player.Character then
 			for _, part in ipairs(player.Character:GetDescendants()) do
 				if part:IsA("BasePart") then
@@ -12991,7 +13146,7 @@ VisualFPS:AddCheckbox("DisableRenderFog", {
 
 			track("DisableRenderFog_PlayerAdded", Players.PlayerAdded:Connect(hookPlayerShadows))
 
-			for _, player in ipairs(Players:GetPlayers()) do
+			for _, player in ipairs(TSG_PlayerList) do
 				hookPlayerShadows(player)
 			end
 		else
@@ -13370,19 +13525,12 @@ end
 -- someone else's machine for the server are never visible to us. So this caps
 -- runaway FireServer/InvokeServer spam per remote and drops the excess.
 -- Globals on purpose: the main chunk is at Luau's 200-local register limit.
-TSG_RemoteSpamOriginal = nil
-TSG_RemoteSpamInstalled = false
 TSG_RemoteSpamWindow = {}
 TSG_RemoteSpamLimit = 150
 
-function TSG_RemoteSpamHook(...)
-	-- Fast bail while the checkbox is off: one table read and two checks, so the
-	-- hook effectively costs nothing until you turn it on.
-	local toggle = Toggles.BlockRemoteSpam
-	if not (toggle and toggle.Value) then
-		return TSG_RemoteSpamOriginal(...)
-	end
-
+-- Called as handler(previous, ...). Registered with the shared dispatcher only
+-- while the checkbox is on, so it is never chained on top of the other hooks.
+function TSG_RemoteSpamHook(previous, ...)
 	local self = ...
 	local method = getnamecallmethod()
 
@@ -13399,18 +13547,17 @@ function TSG_RemoteSpamHook(...)
 		end
 	end
 
-	return TSG_RemoteSpamOriginal(...)
+	return previous(...)
 end
 
 TSG_AntiLagGroup:AddCheckbox("BlockRemoteSpam", {
 	Text = "Block Remote Spam",
 	Default = false,
 	Callback = function(state)
-		if state and not TSG_RemoteSpamInstalled and hookmetamethod then
-			TSG_RemoteSpamInstalled = true
-			TSG_RemoteSpamOriginal = hookmetamethod(game, "__namecall", function(...)
-				return TSG_RemoteSpamHook(...)
-			end)
+		if state then
+			TSG_AddNamecallHook(TSG_RemoteSpamHook)
+		else
+			TSG_RemoveNamecallHook(TSG_RemoteSpamHook)
 		end
 	end,
 })
@@ -13566,7 +13713,7 @@ local espObjects = {}
 espPlayerList = {}
 function refreshESPPlayerList()
 	local list = {}
-	for _, p in ipairs(Players:GetPlayers()) do
+	for _, p in ipairs(TSG_PlayerList) do
 		if p ~= LocalPlayer then
 			table.insert(list, p)
 		end
@@ -14698,7 +14845,7 @@ end)
 local function updateAttachPlayerList()
 	local list = {}
 	local kaList = {"All"}
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player ~= LocalPlayer then
 			table.insert(list, player.Name)
 			table.insert(kaList, player.Name)
@@ -14797,7 +14944,7 @@ local function updateCamlockPlayerList()
 	pcall(function()
 		if not Options.CamlockPlayerList then return end
 		local playerNames = {}
-		for _, player in ipairs(Players:GetPlayers()) do
+		for _, player in ipairs(TSG_PlayerList) do
 			if player ~= LocalPlayer then
 				table.insert(playerNames, player.Name)
 			end
@@ -14912,7 +15059,7 @@ end)
 -- Spectate Script Logic
 local function updateSpectatePlayerList()
 	local list = {}
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player ~= LocalPlayer then
 			table.insert(list, player.Name)
 		end
@@ -15427,7 +15574,7 @@ end)
 
 local function updateTeleportPlayerList()
 	local list = {}
-	for _, player in ipairs(Players:GetPlayers()) do
+	for _, player in ipairs(TSG_PlayerList) do
 		if player ~= LocalPlayer then
 			table.insert(list, player.Name)
 		end
