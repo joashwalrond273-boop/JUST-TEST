@@ -13037,15 +13037,24 @@ local VisualFPS = Tabs.Visuals:AddRightGroupbox("FPS BOOSTER", "zap")
 TSG_AntiLagGroup = Tabs.Visuals:AddRightGroupbox("ANTI-LAG PLUS", "wind")
 
 -- ==========================================
-local function setPlayerShadows(castShadow)
-	for _, player in ipairs(TSG_PlayerList) do
-		if player.Character then
-			for _, part in ipairs(player.Character:GetDescendants()) do
-				if part:IsA("BasePart") then
-					pcall(function() part.CastShadow = castShadow end)
-				end
+-- Flips CastShadow on every part of one character. The old code opened a fresh
+-- pcall (and a closure) for each individual part; one protected call per
+-- character is enough and removes most of the cost of the shadow toggles below.
+-- Global on purpose: the main chunk is at Luau's 200-local register limit.
+function TSG_ApplyCharacterShadows(character, castShadow)
+	if not character then return end
+	pcall(function()
+		for _, part in ipairs(character:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.CastShadow = castShadow
 			end
 		end
+	end)
+end
+
+local function setPlayerShadows(castShadow)
+	for _, player in ipairs(TSG_PlayerList) do
+		TSG_ApplyCharacterShadows(player.Character, castShadow)
 	end
 end
 
@@ -13073,14 +13082,22 @@ do
 		Callback = function(state)
 			disconnect("LowTextures")
 			if state then
-				-- Process workspace smoothly in micro-chunks without memory bloat or FPS freeze
+				-- Walk the tree a node at a time instead of calling
+				-- workspace:GetDescendants(), which built one huge array up front
+				-- and hitched the frame on large maps. Yielding every few hundred
+				-- nodes keeps memory flat and the frame smooth.
 				task.spawn(function()
-					local descendants = workspace:GetDescendants()
-					for i = 1, #descendants do
+					local stack = { workspace }
+					local processed = 0
+					while #stack > 0 do
 						if not (Toggles.LowTextures and Toggles.LowTextures.Value) then break end
-						local v = descendants[i]
-						simplifyObject(v)
-						if i % 300 == 0 then
+						local node = table.remove(stack)
+						for _, child in ipairs(node:GetChildren()) do
+							simplifyObject(child)
+							stack[#stack + 1] = child
+						end
+						processed = processed + 1
+						if processed % 300 == 0 then
 							task.wait()
 						end
 					end
@@ -13135,11 +13152,7 @@ VisualFPS:AddCheckbox("DisableRenderFog", {
 				disconnect(connName)
 				track(connName, player.CharacterAdded:Connect(function(char)
 					if Toggles.DisableRenderFog and Toggles.DisableRenderFog.Value then
-						for _, part in ipairs(char:GetDescendants()) do
-							if part:IsA("BasePart") then
-								pcall(function() part.CastShadow = false end)
-							end
-						end
+						TSG_ApplyCharacterShadows(char, false)
 					end
 				end))
 			end
