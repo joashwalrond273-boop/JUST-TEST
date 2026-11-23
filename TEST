@@ -5743,14 +5743,14 @@ AutoSwingConfigTab:AddCheckbox("SmartSwing", {
 })
 
 AutoSwingConfigTab:AddCheckbox("SwingSpeedToggle", {
-	Text = "Animation Speed",
+	Text = "Swing Speed",
 	Default = false,
 })
 
 AutoSwingConfigTab:AddSlider("SwingSpeedVal", {
-	Text = "Animation Speed Value",
+	Text = "Swing Speed Value",
 	Default = 1,
-	Min = 0.1,
+	Min = 1,
 	Max = 15,
 	Rounding = 1,
 	Compact = true,
@@ -10810,37 +10810,25 @@ local function setupAnimationSpeedHacks(char)
 	local animator = hum and hum:WaitForChild("Animator", 10)
 	if animator then
 		disconnect("AnimSpeedPlayed")
-		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(applyAnimationSpeed))
+		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(function(trackObj)
+			local adjusting = false
+			local function enforceSpeed()
+				if adjusting then return end
+				local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
+				if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
+					adjusting = true
+					trackObj:AdjustSpeed(targetSpeed)
+					adjusting = false
+				end
+			end
+			enforceSpeed()
+			trackObj:GetPropertyChangedSignal("Speed"):Connect(enforceSpeed)
+		end))
 		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
 			applyAnimationSpeed(trackObj)
 		end
 	end
 end
-
--- The Animate script re-applies its own track speed whenever the walk state or
--- walk speed changes, so a one-off AdjustSpeed gets overwritten - that is why the
--- animation speed used to snap back to normal in motion. Re-applying on Heartbeat
--- while the toggle is on keeps the chosen speed. This also replaces the per-track
--- GetPropertyChangedSignal connection the old code created on every
--- AnimationPlayed and never disconnected, which leaked for the whole session.
-track("SwingSpeedLoop", RunService.Heartbeat:Connect(function()
-	local toggle = Toggles.SwingSpeedToggle
-	if not (toggle and toggle.Value) then return end
-
-	local char = getCharacter()
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	local animator = hum and hum:FindFirstChild("Animator")
-	if not animator then return end
-
-	local targetSpeed = (Options.SwingSpeedVal and Options.SwingSpeedVal.Value) or 1
-	for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
-		if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
-			pcall(function()
-				trackObj:AdjustSpeed(targetSpeed)
-			end)
-		end
-	end
-end))
 
 track("SwingCharacterAdded", LocalPlayer.CharacterAdded:Connect(function(char)
 	setupAnimationSpeedHacks(char)
