@@ -13268,79 +13268,127 @@ VisualFPS:AddCheckbox("NoGrass", {
 })
 
 do
-	-- Effect templates that are deleted outright when this is ticked. Destroying
-	-- an instance cannot be undone, so unticking only re-arms the checkbox -
-	-- rejoin to get them back.
+	-- Effect templates removed outright when this is ticked. Every entry is
+	-- { rootTag, <child names...> }. "SPS" means StarterPlayerScripts, which the
+	-- engine clones into the player's PlayerScripts on join - the live copy is
+	-- the one that actually plays the effects - so both the template and the
+	-- live copy are purged. Destroying an instance cannot be undone, so unticking
+	-- only re-arms the checkbox: rejoin to get them back.
 	local REMOVE_PATHS = {
-		{ "Other", "SamuraiEffects" },
-		{ "Other", "Explosion" },
-		{ "Other", "CrashingWave" },
-		{ "Other", "CannonSmoke" },
-		{ "Other", "CannonExplosion" },
-		{ "Particles", "UpwardsIceSmoke" },
-		{ "Particles", "SwimPPart" },
+		{ "RS", "Other", "SamuraiEffects" },
+		{ "RS", "Other", "Explosion" },
+		{ "RS", "Other", "CrashingWave" },
+		{ "RS", "Other", "CannonSmoke" },
+		{ "RS", "Other", "CannonExplosion" },
+		{ "RS", "Particles", "UpwardsIceSmoke" },
+		{ "RS", "Particles", "SwimPPart" },
+		{ "RS", "game", "ImperialShip", "Body", "FIRE" },
+		{ "RS", "game", "Items", "models", "Torch", "FireEmitter" },
+		{ "SPS", "ArenaController", "Particles", "Clouds" },
+		{ "SPS", "ArenaController", "Particles", "CloudsSigil" },
+		{ "SPS", "ArenaController", "Particles", "EvilEmitter" },
+		{ "SPS", "ArenaController", "Particles", "Collection" },
+		{ "SPS", "ArenaController", "Particles", "PurpleSkull" },
+		{ "SPS", "ArenaController", "CircleRing" },
+		{ "SPS", "ArenaController", "RadiusSmoke" },
 	}
 
-	local WATCHED_CONTAINERS = {}
+	local function getRoots(tag)
+		local roots = {}
+		if tag == "RS" then
+			roots[1] = ReplicatedStorage
+		else
+			local starterPlayer = game:GetService("StarterPlayer")
+			local template = starterPlayer and starterPlayer:FindFirstChild("StarterPlayerScripts")
+			if template then roots[#roots + 1] = template end
+			local live = LocalPlayer:FindFirstChild("PlayerScripts")
+			if live then roots[#roots + 1] = live end
+		end
+		return roots
+	end
+
+	local function resolveFrom(root, names, fromIndex)
+		local node = root
+		for i = fromIndex, #names do
+			if not node then return nil end
+			node = node:FindFirstChild(names[i])
+		end
+		return node
+	end
+
+	-- One watcher per distinct parent, so a re-added target is deleted again.
+	local WATCHERS = {}
 	for i = 1, #REMOVE_PATHS do
-		WATCHED_CONTAINERS[REMOVE_PATHS[i][1]] = true
+		local path = REMOVE_PATHS[i]
+		local key = table.concat(path, "/", 1, #path - 1)
+		local watcher = WATCHERS[key]
+		if not watcher then
+			watcher = { tag = path[1], parentNames = {}, targets = {} }
+			for j = 2, #path - 1 do
+				watcher.parentNames[#watcher.parentNames + 1] = path[j]
+			end
+			WATCHERS[key] = watcher
+		end
+		watcher.targets[path[#path]] = true
 	end
 
-	local function isRemovedName(containerName, instanceName)
-		for i = 1, #REMOVE_PATHS do
-			local entry = REMOVE_PATHS[i]
-			if entry[1] == containerName and entry[2] == instanceName then
-				return true
+	local armedNames = {}
+
+	local function watchContainer(connectionName, container, targets)
+		track(connectionName, container.ChildAdded:Connect(function(v)
+			if Toggles.RemoveEmitters and Toggles.RemoveEmitters.Value and targets[v.Name] then
+				pcall(function() v:Destroy() end)
+			end
+		end))
+		armedNames[#armedNames + 1] = connectionName
+	end
+
+	local function armWatchers()
+		for key, watcher in pairs(WATCHERS) do
+			local roots = getRoots(watcher.tag)
+			for r = 1, #roots do
+				local parent = resolveFrom(roots[r], watcher.parentNames, 1)
+				if parent then
+					watchContainer("RemoveEmitters/" .. key .. "/" .. r, parent, watcher.targets)
+				end
 			end
 		end
-		return false
 	end
 
-	local function purgeAll()
-		local removed = 0
-		for i = 1, #REMOVE_PATHS do
-			local container = ReplicatedStorage:FindFirstChild(REMOVE_PATHS[i][1])
-			local instance = container and container:FindFirstChild(REMOVE_PATHS[i][2])
-			if instance then
-				pcall(function() instance:Destroy() end)
-				removed = removed + 1
-			end
-		end
-		return removed
-	end
-
-	VisualFPS:AddCheckbox("NoSamuraiFX", {
+	VisualFPS:AddCheckbox("RemoveEmitters", {
 		Text = "Remove Emitters",
 		Default = false,
 		Callback = function(state)
-			for containerName in pairs(WATCHED_CONTAINERS) do
-				disconnect("NoSamuraiFX_Watch_" .. containerName)
+			for i = 1, #armedNames do
+				disconnect(armedNames[i])
 			end
+			table.clear(armedNames)
 
 			if not state then
 				-- Already destroyed; there is nothing to bring back.
 				return
 			end
 
-			local removed = purgeAll()
+			local removed, total = 0, 0
+			for i = 1, #REMOVE_PATHS do
+				local roots = getRoots(REMOVE_PATHS[i][1])
+				for r = 1, #roots do
+					total = total + 1
+					local node = resolveFrom(roots[r], REMOVE_PATHS[i], 2)
+					if node then
+						pcall(function() node:Destroy() end)
+						removed = removed + 1
+					end
+				end
+			end
+
 			Library:Notify({
 				Title = "Remove Emitters",
-				Description = removed > 0 and ("Removed " .. removed .. " of " .. #REMOVE_PATHS) or "Nothing found to remove",
+				Description = removed > 0 and ("Removed " .. removed .. " of " .. total) or "Nothing found to remove",
 				Time = 3,
 			})
 
-			-- Re-delete anything the game puts back.
-			for containerName in pairs(WATCHED_CONTAINERS) do
-				local capturedName = containerName
-				local container = ReplicatedStorage:FindFirstChild(capturedName)
-				if container then
-					track("NoSamuraiFX_Watch_" .. capturedName, container.ChildAdded:Connect(function(v)
-						if Toggles.NoSamuraiFX and Toggles.NoSamuraiFX.Value and isRemovedName(capturedName, v.Name) then
-							pcall(function() v:Destroy() end)
-						end
-					end))
-				end
-			end
+			armWatchers()
 		end,
 	})
 end
@@ -15835,8 +15883,8 @@ Library:OnUnload(function()
 	if Toggles.NoGrass and Toggles.NoGrass.Value then
 		Toggles.NoGrass:SetValue(false)
 	end
-	if Toggles.NoSamuraiFX and Toggles.NoSamuraiFX.Value then
-		Toggles.NoSamuraiFX:SetValue(false)
+	if Toggles.RemoveEmitters and Toggles.RemoveEmitters.Value then
+		Toggles.RemoveEmitters:SetValue(false)
 	end
 	if Toggles.LowQualityLevel and Toggles.LowQualityLevel.Value then
 		Toggles.LowQualityLevel:SetValue(false)
