@@ -11055,6 +11055,133 @@ FarmChop:AddSlider("AutoChopSpeed", {
 
 FarmChop:AddDivider()
 
+-- ==========================================
+-- FARMING tab. The Farmland checkbox equips the shovel (item id 6) and keeps
+-- firing the createFarmland remote to lay tiles in a straight line ahead of the
+-- player. Tab handle and last-place timestamp are globals on purpose: the main
+-- chunk is at Luau's 200-local register limit.
+FarmlandTab = OreFarmRightTabBox:AddTab("FARMING", "sprout")
+
+FarmlandTab:AddCheckbox("Farmland", {
+	Text = "Farmland",
+	Default = false,
+})
+
+FarmlandTab:AddDropdown("FarmlandSlot", {
+	Text = "Tool Slot",
+	Values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+	Default = "5",
+})
+
+FarmlandTab:AddSlider("FarmlandTileSize", {
+	Text = "Tile Size",
+	Default = 4,
+	Min = 1,
+	Max = 20,
+	Rounding = 1,
+	Compact = true,
+})
+
+FarmlandTab:AddSlider("FarmlandDelay", {
+	Text = "Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 3,
+	Rounding = 1,
+	Compact = true,
+})
+
+FarmlandTab:AddDivider()
+
+FarmlandLastPlace = 0
+
+Toggles.Farmland:OnChanged(function()
+	disconnect("Farmland")
+	if not Toggles.Farmland.Value then return end
+
+	if not TSG.CreateFarmlandRemote then
+		Library:Notify({ Title = "Farmland", Description = "createFarmland remote not found.", Time = 4 })
+		Toggles.Farmland:SetValue(false)
+		return
+	end
+
+	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+
+	-- Put the shovel in the chosen hotbar slot first so the server accepts the
+	-- placement that follows. 6 is the shovel item id.
+	if TSG.EquipHotbarRemote then
+		pcall(function()
+			TSG.EquipHotbarRemote:InvokeServer("inventory", slot, 6)
+		end)
+	end
+
+	-- Places 2 tiles in a line ahead of the player. Local on purpose so it stays
+	-- off the main chunk's register budget.
+	local function placeAhead()
+		local root = getRootPart()
+		if not root then return end
+
+		local size = (Options.FarmlandTileSize and Options.FarmlandTileSize.Value) or 4
+		local look = root.CFrame.LookVector
+		local forward = Vector3.new(look.X, 0, look.Z)
+		if forward.Magnitude < 1e-4 then
+			forward = Vector3.new(0, 0, -1)
+		else
+			forward = forward.Unit
+		end
+
+		-- Snap the origin to the world grid so every pass lines up straight.
+		local baseX = math.floor(root.Position.X / size + 0.5) * size
+		local baseZ = math.floor(root.Position.Z / size + 0.5) * size
+		local y = root.Position.Y
+
+		-- Step along whichever world axis the player faces most, so the line stays
+		-- axis aligned instead of drifting diagonally between placements.
+		local stepX, stepZ = 0, 0
+		if math.abs(forward.X) >= math.abs(forward.Z) then
+			stepX = forward.X >= 0 and size or -size
+		else
+			stepZ = forward.Z >= 0 and size or -size
+		end
+
+		for i = 1, 2 do
+			local pos = Vector3.new(baseX + stepX * i, y, baseZ + stepZ * i)
+
+			-- Skip a spot that already has farmland so a loop that keeps running
+			-- does not spam the same coordinate.
+			local occupied = false
+			local folder = workspace:FindFirstChild("farmland")
+			if folder then
+				for _, obj in ipairs(folder:GetChildren()) do
+					local part = getChopTargetPart(obj)
+					if part then
+						local d = (Vector3.new(part.Position.X, 0, part.Position.Z)
+							- Vector3.new(pos.X, 0, pos.Z)).Magnitude
+						if d < size * 0.5 then
+							occupied = true
+							break
+						end
+					end
+				end
+			end
+
+			if not occupied then
+				pcall(function()
+					TSG.CreateFarmlandRemote:FireServer(slot, pos, 0)
+				end)
+			end
+		end
+	end
+
+	track("Farmland", RunService.Heartbeat:Connect(function()
+		if not Toggles.Farmland.Value or not isAlive() then return end
+		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.5
+		if tick() - FarmlandLastPlace < delay then return end
+		FarmlandLastPlace = tick()
+		placeAhead()
+	end))
+end)
+
 -- Dynamic farm: "Select Mineable" is filled from workspace.worldResources.mineable
 -- and "Select Choppable" from workspace.worldResources.choppable. Pick one, then
 -- press Farm to teleport through that resource's nodes. Mineables drive Auto Mine,
@@ -16055,6 +16182,9 @@ Library:OnUnload(function()
 	end
 	if Toggles.AutoChop and Toggles.AutoChop.Value then
 		Toggles.AutoChop:SetValue(false)
+	end
+	if Toggles.Farmland and Toggles.Farmland.Value then
+		Toggles.Farmland:SetValue(false)
 	end
 	if Toggles.AiAura and Toggles.AiAura.Value then
 		Toggles.AiAura:SetValue(false)
