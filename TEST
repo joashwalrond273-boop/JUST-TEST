@@ -11064,6 +11064,93 @@ FarmChop:AddDivider()
 -- just long enough to fire their remote, then hand the previous tool back, so they
 -- work without the player holding the shovel. Handles and state are globals on
 -- purpose: the main chunk is at Luau's 200-local limit.
+-- ==========================================
+-- Farmland cell index. Farmland / Plant / Harvest each used to walk the whole
+-- workspace.farmland folder on a timer, which is what made them lag once the farm
+-- grew to a few thousand tiles. Instead the tiles are bucketed by the 4-stud grid
+-- cell they sit on, and the buckets are kept live with ChildAdded / ChildRemoved,
+-- so a lookup costs O(1) no matter how big the farm is. Names are globals on
+-- purpose: the main chunk is at Luau's 200-local limit.
+FARM_CELL = 4
+FarmCells = nil          -- ["cx:cz"] = { tile, tile, ... }
+FarmObjCell = nil        -- [tile] = "cx:cz", weak keys so destroyed tiles drop out
+FarmIndexFolder = nil    -- the folder the buckets were built from
+FarmIndexConns = nil
+
+-- Also shared: building a fresh RaycastParams every placement pass was pure
+-- allocation churn.
+FarmRayParams = RaycastParams.new()
+FarmRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+function FarmCellKey(x, z)
+	return math.floor(x / FARM_CELL + 0.5) .. ":" .. math.floor(z / FARM_CELL + 0.5)
+end
+
+function FarmIndexAdd(obj)
+	if not FarmCells or not FarmObjCell or not obj then return end
+	local part = getChopTargetPart(obj)
+	if not part then return end
+	local key = FarmCellKey(part.Position.X, part.Position.Z)
+	local list = FarmCells[key]
+	if not list then
+		list = {}
+		FarmCells[key] = list
+	end
+	list[#list + 1] = obj
+	FarmObjCell[obj] = key
+end
+
+function FarmIndexRemove(obj)
+	if not FarmCells or not FarmObjCell or not obj then return end
+	local key = FarmObjCell[obj]
+	if not key then return end
+	FarmObjCell[obj] = nil
+	local list = FarmCells[key]
+	if list then
+		for i = #list, 1, -1 do
+			if list[i] == obj then
+				table.remove(list, i)
+				break
+			end
+		end
+		if #list == 0 then
+			FarmCells[key] = nil
+		end
+	end
+end
+
+-- Builds the buckets for whatever folder is currently in workspace.farmland, and
+-- re-hooks the listeners if that folder has been swapped out. One pass, only when
+-- the folder itself changes - not per frame, not per pass.
+function EnsureFarmIndex()
+	FarmCells = FarmCells or {}
+	FarmObjCell = FarmObjCell or setmetatable({}, { __mode = "k" })
+
+	local folder = workspace:FindFirstChild("farmland")
+	if not folder or folder == FarmIndexFolder then
+		return folder
+	end
+
+	FarmCells = {}
+	FarmObjCell = setmetatable({}, { __mode = "k" })
+	FarmIndexFolder = folder
+
+	if FarmIndexConns then
+		for _, conn in FarmIndexConns do
+			conn:Disconnect()
+		end
+	end
+	FarmIndexConns = {
+		folder.ChildAdded:Connect(FarmIndexAdd),
+		folder.ChildRemoved:Connect(FarmIndexRemove),
+	}
+
+	for _, obj in folder:GetChildren() do
+		FarmIndexAdd(obj)
+	end
+	return folder
+end
+
 FarmlandGroup = Tabs.OreFactory:AddRightGroupbox("FARMING", "sprout")
 
 FarmlandGroup:AddToggle("Farmland", {
@@ -11194,33 +11281,21 @@ Toggles.Farmland:OnChanged(function()
 			{ x = cellX + stepX + sideX, z = cellZ + stepZ + sideZ },
 		}
 
-		-- One sweep over the farmland marks any of the two cells that are already
-		-- taken, instead of scanning the whole folder once per tile.
+		-- Cell index lookup instead of sweeping the whole folder: O(1) per cell no
+		-- matter how large the farm grows.
+		EnsureFarmIndex()
 		local occupied = { false, false }
-		local folder = workspace:FindFirstChild("farmland")
-		if folder then
-			local limit = (size * 0.5) * (size * 0.5)
-			for _, obj in ipairs(folder:GetChildren()) do
-				local part = getChopTargetPart(obj)
-				if part then
-					for i = 1, 2 do
-						if not occupied[i] then
-							local dx = part.Position.X - cells[i].x
-							local dz = part.Position.Z - cells[i].z
-							if dx * dx + dz * dz < limit then
-								occupied[i] = true
-							end
-						end
-					end
-				end
+		for i = 1, 2 do
+			local list = FarmCells[FarmCellKey(cells[i].x, cells[i].z)]
+			if list and #list > 0 then
+				occupied[i] = true
 			end
 		end
 
 		-- Place on the ground, not at hip height (root.Position sits about 3 studs
 		-- above the feet), so raycast straight down to find the surface under each
 		-- tile.
-		local rayParams = RaycastParams.new()
-		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		local rayParams = FarmRayParams
 		rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
 		local function groundY(x, z)
 			local hit = workspace:Raycast(Vector3.new(x, root.Position.Y + 4, z), Vector3.new(0, -40, 0), rayParams)
@@ -11249,8 +11324,7 @@ Toggles.Farmland:OnChanged(function()
 		if FarmlandBusy then return end
 
 		-- Cheap early-out: only do any work when the player steps into a new 4-stud
-		-- grid cell. Standing still therefore costs two floors per frame, which is
-		-- what stops the folder scan from lagging the game.
+		-- grid cell, so standing still costs two floors per frame and nothing else.
 		local root = getRootPart()
 		if not root then return end
 		local size = 4
@@ -11327,8 +11401,10 @@ Toggles.Plant:OnChanged(function()
 		end)
 	end
 
-	-- Plants the chosen crop into any farmland tile near the player that has not
-	-- been planted yet. Local on purpose so it stays off the register budget.
+	-- Plants the crop into the farmland tile the player is standing on. Farmland
+	-- drops its tiles on a 4-stud world grid, so the tile under the feet is the one
+	-- at the player's rounded grid cell - walking forward therefore plants each tile
+	-- as it passes underfoot. Local on purpose so it stays off the register budget.
 	local function plantPass()
 		local root = getRootPart()
 		if not root then return end
@@ -11336,29 +11412,28 @@ Toggles.Plant:OnChanged(function()
 		local cropId = Options.PlantCrop and cropIds[Options.PlantCrop.Value]
 		if not cropId then return end
 
-		local folder = workspace:FindFirstChild("farmland")
-		if not folder then return end
+		if not EnsureFarmIndex() then return end
 
-		local range = 16
-		local targets = {}
-		for _, obj in ipairs(folder:GetChildren()) do
+		-- Cell index lookup: the tile under the feet is whatever sits in the player's
+		-- current 4-stud grid cell, so this is O(1) regardless of farm size.
+		local list = FarmCells[FarmCellKey(root.Position.X, root.Position.Z)]
+		if not list then return end
+
+		local target
+		for _, obj in list do
 			if not PlantSeen[obj] then
-				local part = getChopTargetPart(obj)
-				if part and getFlatDistance(root.Position, part.Position) <= range then
-					PlantSeen[obj] = true
-					table.insert(targets, obj)
-				end
+				PlantSeen[obj] = true
+				target = obj
+				break
 			end
 		end
 
-		if #targets == 0 then return end
+		if not target then return end
 
 		ensureShovel()
-		for _, obj in ipairs(targets) do
-			pcall(function()
-				TSG.PlantRemote:FireServer(slot, cropId, obj)
-			end)
-		end
+		pcall(function()
+			TSG.PlantRemote:FireServer(slot, cropId, target)
+		end)
 	end
 
 	track("Plant", RunService.Heartbeat:Connect(function()
@@ -12033,18 +12108,29 @@ local function autoChop()
 	end
 
 	-- Nearest crop in range. Harvest is a separate remote, so a crop does not
-	-- stop the chop pass above from firing on the same tick.
-	local farmland = workspace:FindFirstChild("farmland")
-	if farmland and TSG.HarvestRemote then
+	-- stop the chop pass above from firing on the same tick. Only the cells whose
+	-- 4-stud bucket lies inside the range are visited, so this stays cheap even with
+	-- a huge farm behind the player.
+	if TSG.HarvestRemote and EnsureFarmIndex() then
 		local slot = tonumber(Options.AutoChopSlot.Value) or 1
 		local crop, cropDist = nil, maxRange
-		for _, obj in ipairs(farmland:GetChildren()) do
-			if resourceNameMatches(obj, nameFilter) then
-				local part = getChopTargetPart(obj)
-				if part then
-					local d = getFlatDistance(root.Position, part.Position)
-					if d < cropDist then
-						crop, cropDist = obj, d
+		local radius = math.ceil(maxRange / FARM_CELL)
+		local pcx = math.floor(root.Position.X / FARM_CELL + 0.5)
+		local pcz = math.floor(root.Position.Z / FARM_CELL + 0.5)
+		for cx = pcx - radius, pcx + radius do
+			for cz = pcz - radius, pcz + radius do
+				local list = FarmCells[cx .. ":" .. cz]
+				if list then
+					for _, obj in list do
+						if resourceNameMatches(obj, nameFilter) then
+							local part = getChopTargetPart(obj)
+							if part then
+								local d = getFlatDistance(root.Position, part.Position)
+								if d < cropDist then
+									crop, cropDist = obj, d
+								end
+							end
+						end
 					end
 				end
 			end
