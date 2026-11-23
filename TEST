@@ -6755,6 +6755,20 @@ CombatReach:AddSlider("ReachAngle", {
 	Compact = true,
 })
 
+CombatReach:AddCheckbox("ReachTeamCheck", {
+	Text = "Team Check",
+	Default = false,
+})
+
+-- Names picked here are skipped by the reach, on top of the Team Check above.
+CombatReach:AddDropdown("ReachIgnore", {
+	Text = "Ignore List",
+	Values = {},
+	Default = {},
+	Multi = true,
+	AllowNull = true,
+})
+
 local function isSwingAnimation(trackObj)
 	local anim = trackObj.Animation
 	if not anim then return false end
@@ -8868,10 +8882,29 @@ local function connectReachTool(tool)
 
 				local targetsToHit = {}
 
+				-- Team Check / Ignore List. The ignore dropdown is a multi-select, so
+				-- its value is either {name = true} or {name, name} - both shapes are
+				-- read so the picked names resolve either way.
+				local teamCheck = Toggles.ReachTeamCheck and Toggles.ReachTeamCheck.Value
+				local ignoreSetting = Options.ReachIgnore and Options.ReachIgnore.Value
+				local ignoreSet = {}
+				if type(ignoreSetting) == "table" then
+					for key, selected in pairs(ignoreSetting) do
+						if type(key) == "string" then
+							ignoreSet[key] = true
+						end
+						if type(selected) == "string" then
+							ignoreSet[selected] = true
+						end
+					end
+				end
+
 				-- Scan Players
 				for _, otherPlayer in ipairs(TSG_PlayerList) do
 					if otherPlayer ~= LocalPlayer and otherPlayer.Character then
-						if reachTargetSetting == "All" or otherPlayer.Name == reachTargetSetting then
+						if (reachTargetSetting == "All" or otherPlayer.Name == reachTargetSetting)
+							and not ignoreSet[otherPlayer.Name]
+							and not (teamCheck and isTeammate(otherPlayer)) then
 							local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
 							local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
 							if otherHum and otherHum.Health > 0 and otherRoot then
@@ -9909,9 +9942,11 @@ MoveSwimBoost:AddSlider("SwimBoostValue", {
 	Compact = true,
 })
 
-MoveSwimBoost:AddDivider()
+-- SINK is created after SWIM so it lands directly under it in the left column.
+-- Global on purpose: the main chunk is at Luau's 200-local limit.
+MoveSink = Tabs.Movement:AddLeftGroupbox("SINK", "droplet")
 
-MoveSwimBoost:AddDropdown("FastPVPDirection", {
+MoveSink:AddDropdown("FastPVPDirection", {
 	Text = "Sink Function",
 	Values = {"Sink Fast PVP", "Rise Fast PVP"},
 	Default = {},
@@ -9919,7 +9954,7 @@ MoveSwimBoost:AddDropdown("FastPVPDirection", {
 	AllowNull = true,
 })
 
-MoveSwimBoost:AddSlider("FastPVPSpeed", {
+MoveSink:AddSlider("FastPVPSpeed", {
 	Text = "Fast PVP Speed",
 	Default = 60,
 	Min = 10,
@@ -9955,6 +9990,9 @@ updateSwimBoostVisibility = function()
 	end
 
 	MoveSwimBoost:Resize()
+	if MoveSink then
+		MoveSink:Resize()
+	end
 end
 
 updateSwimBoostVisibility()
@@ -11158,15 +11196,15 @@ FarmlandGroup:AddToggle("Farmland", {
 	Default = false,
 })
 
-FarmlandGroup:AddCheckbox("Plant", {
-	Text = "Plant",
-	Default = false,
-})
-
 FarmlandGroup:AddDropdown("PlantCrop", {
 	Text = "Crop",
 	Values = {"Cabbage", "Carrot", "Berries", "Peppers", "Wheat"},
 	Default = "Carrot",
+})
+
+FarmlandGroup:AddCheckbox("Plant", {
+	Text = "Plant",
+	Default = false,
 })
 
 FarmlandGroup:AddCheckbox("Harvest", {
@@ -11182,15 +11220,6 @@ FarmlandGroup:AddDropdown("FarmlandSlot", {
 	Default = "5",
 })
 
-FarmlandGroup:AddSlider("FarmlandDelay", {
-	Text = "Delay",
-	Default = 0.1,
-	Min = 0.05,
-	Max = 3,
-	Rounding = 2,
-	Compact = true,
-})
-
 FarmlandGroup:AddDivider()
 
 FarmlandLastPlace = 0
@@ -11199,12 +11228,77 @@ FarmlandRestoreTool = nil
 FarmlandLastCX = nil
 FarmlandLastCZ = nil
 
--- Harvest mirrors Auto Chop: ticking it turns Auto Chop on, unticking turns it off.
+-- Harvest runs its own loop with the harvest remote. It reads the same Range /
+-- Speed / Node Name Filter as Auto Chop so crops are harvested the same way, but
+-- it is no longer tied to the Auto Chop toggle in either direction.
+HarvestLastHit = 0
+
 Toggles.Harvest:OnChanged(function()
-	local autoChop = Toggles.AutoChop
-	if autoChop and autoChop.Value ~= Toggles.Harvest.Value then
-		autoChop:SetValue(Toggles.Harvest.Value)
+	disconnect("Harvest")
+
+	if not Toggles.Harvest.Value then
+		return
 	end
+
+	if not TSG.HarvestRemote then
+		Library:Notify({ Title = "Harvest", Description = "harvest remote not found.", Time = 4 })
+		Toggles.Harvest:SetValue(false)
+		return
+	end
+
+	-- Nearest crop inside Auto Chop's range, visiting only the 4-stud buckets that
+	-- fall within it, so this stays cheap even with a huge farm behind the player.
+	-- Local on purpose so it stays off the register budget.
+	local function harvestPass()
+		local root = getRootPart()
+		if not root then return end
+
+		local maxRange = (Options.AutoChopRange and Options.AutoChopRange.Value) or 30
+		local nameFilter = (Options.AutoChopNameFilter and Options.AutoChopNameFilter.Value) or ""
+
+		if not EnsureFarmIndex() then return end
+
+		local crop, cropDist = nil, maxRange
+		local radius = math.ceil(maxRange / FARM_CELL)
+		local pcx = math.floor(root.Position.X / FARM_CELL + 0.5)
+		local pcz = math.floor(root.Position.Z / FARM_CELL + 0.5)
+		for cx = pcx - radius, pcx + radius do
+			for cz = pcz - radius, pcz + radius do
+				local list = FarmCells[cx .. ":" .. cz]
+				if list then
+					for _, obj in list do
+						if resourceNameMatches(obj, nameFilter) then
+							local part = getChopTargetPart(obj)
+							if part then
+								local d = getFlatDistance(root.Position, part.Position)
+								if d < cropDist then
+									crop, cropDist = obj, d
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+
+		if not crop then return end
+
+		local slot = tonumber(Options.AutoChopSlot and Options.AutoChopSlot.Value) or 1
+		pcall(function()
+			TSG.HarvestRemote:FireServer(slot, crop)
+		end)
+	end
+
+	track("Harvest", RunService.Heartbeat:Connect(function()
+		if not Toggles.Harvest.Value or not isAlive() then return end
+
+		-- Same pace as Auto Chop, driven by its Speed slider.
+		local speed = (Options.AutoChopSpeed and Options.AutoChopSpeed.Value) or 5
+		if tick() - HarvestLastHit < 1 / math.max(0.1, speed) then return end
+		HarvestLastHit = tick()
+
+		pcall(harvestPass)
+	end))
 end)
 
 Toggles.Farmland:OnChanged(function()
@@ -11332,8 +11426,9 @@ Toggles.Farmland:OnChanged(function()
 		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
 		if cellX == FarmlandLastCX and cellZ == FarmlandLastCZ then return end
 
-		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.1
-		if tick() - FarmlandLastPlace < delay then return end
+		-- Fixed 0.1s between placement passes; the delay slider was removed, so the
+		-- pacing is built in.
+		if tick() - FarmlandLastPlace < 0.1 then return end
 
 		FarmlandLastPlace = tick()
 		FarmlandLastCX = cellX
@@ -12057,9 +12152,9 @@ Toggles.AutoMine:OnChanged(function()
 end)
 
 -- ==========================================
--- Both farming remotes are used: trees and plants go through the chop remote as
--- before, while crops planted under workspace.farmland are harvested with the
--- harvest remote, which takes the slot and the crop only.
+-- Auto Chop only chops now: trees and choppable nodes go through the chop remote.
+-- Crops planted under workspace.farmland are handled by the FARMING tab's Harvest
+-- checkbox, which uses the harvest remote with the same range / speed / name filter.
 local function chopObject(obj)
 	local slot = tonumber(Options.AutoChopSlot.Value) or 1
 	local part = getChopTargetPart(obj)
@@ -12107,42 +12202,6 @@ local function autoChop()
 		didHit = true
 	end
 
-	-- Nearest crop in range. Harvest is a separate remote, so a crop does not
-	-- stop the chop pass above from firing on the same tick. Only the cells whose
-	-- 4-stud bucket lies inside the range are visited, so this stays cheap even with
-	-- a huge farm behind the player.
-	if TSG.HarvestRemote and EnsureFarmIndex() then
-		local slot = tonumber(Options.AutoChopSlot.Value) or 1
-		local crop, cropDist = nil, maxRange
-		local radius = math.ceil(maxRange / FARM_CELL)
-		local pcx = math.floor(root.Position.X / FARM_CELL + 0.5)
-		local pcz = math.floor(root.Position.Z / FARM_CELL + 0.5)
-		for cx = pcx - radius, pcx + radius do
-			for cz = pcz - radius, pcz + radius do
-				local list = FarmCells[cx .. ":" .. cz]
-				if list then
-					for _, obj in list do
-						if resourceNameMatches(obj, nameFilter) then
-							local part = getChopTargetPart(obj)
-							if part then
-								local d = getFlatDistance(root.Position, part.Position)
-								if d < cropDist then
-									crop, cropDist = obj, d
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-		if crop then
-			pcall(function()
-				TSG.HarvestRemote:FireServer(slot, crop)
-			end)
-			didHit = true
-		end
-	end
-
 	if didHit then
 		lastAutoChopHit = tick()
 	end
@@ -12150,11 +12209,6 @@ end
 
 Toggles.AutoChop:OnChanged(function()
 	disconnect("AutoChop")
-
-	-- Keep the FARMING tab's Harvest checkbox in step with Auto Chop.
-	if Toggles.Harvest and Toggles.Harvest.Value ~= Toggles.AutoChop.Value then
-		Toggles.Harvest:SetValue(Toggles.AutoChop.Value)
-	end
 
 	if Toggles.AutoChop.Value then
 		if not TSG.ChopRemote then
@@ -13074,7 +13128,10 @@ TSG_TeleportToMeteor = function(ev, label)
 		Library:Notify({ Title = "Meteor", Description = "No meteor landing point found.", Time = 2 })
 		return
 	end
-	local cf = CFrame.new(target.Position + Vector3.new(0, 8, 0))
+	-- The landing point is inside the meteor, so drop in from above it instead of
+	-- a few studs up. Height is tunable - the meteor model's size varies.
+	local height = (Options.MeteorHeight and Options.MeteorHeight.Value) or 30
+	local cf = CFrame.new(target.Position + Vector3.new(0, height, 0))
 	resetAndTeleport(function() return cf end, label or "Meteor", true)
 end
 
@@ -13095,6 +13152,15 @@ TSG_MeteorGroup:AddButton({
 		end
 		TSG_TeleportToMeteor(ev, "Meteor")
 	end,
+})
+
+TSG_MeteorGroup:AddSlider("MeteorHeight", {
+	Text = "Height Above",
+	Default = 30,
+	Min = 5,
+	Max = 150,
+	Rounding = 0,
+	Compact = true,
 })
 
 TSG_MeteorGroup:AddCheckbox("MeteorAlert", {
@@ -15520,6 +15586,28 @@ local function updateAttachPlayerList()
 				Options.ReachTarget:SetValue(current)
 			else
 				Options.ReachTarget:SetValue("All")
+			end
+		end
+	end)
+	pcall(function()
+		if Options.ReachIgnore then
+			-- Names that left the server drop off, the ones still here stay picked.
+			local previous = Options.ReachIgnore.Value
+			local names = {}
+			for _, player in ipairs(TSG_PlayerList) do
+				if player ~= LocalPlayer then
+					table.insert(names, player.Name)
+				end
+			end
+			Options.ReachIgnore:SetValues(names)
+			if typeof(previous) == "table" then
+				local preserved = {}
+				for name, selected in pairs(previous) do
+					if selected == true and table.find(names, name) then
+						preserved[name] = true
+					end
+				end
+				Options.ReachIgnore:SetValue(preserved)
 			end
 		end
 	end)
