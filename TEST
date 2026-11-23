@@ -13267,6 +13267,89 @@ VisualFPS:AddCheckbox("NoGrass", {
 	end,
 })
 
+do
+	-- Samurai ability effects live in ReplicatedStorage.Other.SamuraiEffects.
+	-- The game clones from these templates, and Clone() copies the enabled
+	-- state, so switching the templates off also stops the effects played
+	-- afterwards - not just the ones already sitting in the folder.
+	local originalSamuraiFX = setmetatable({}, { __mode = "k" })
+
+	local function disableSamuraiFX(v)
+		if not v or v:IsA("LuaSourceContainer") then return end
+
+		if originalSamuraiFX[v] == nil then
+			local snapshot = {}
+			pcall(function() snapshot.Enabled = v.Enabled end)
+			pcall(function() snapshot.Transparency = v.Transparency end)
+			pcall(function() snapshot.Volume = v.Volume end)
+			originalSamuraiFX[v] = snapshot
+		end
+
+		pcall(function()
+			if v:IsA("Sound") then
+				v:Stop()
+				v.Volume = 0
+				return
+			end
+			if v:IsA("ParticleEmitter") then
+				v.Enabled = false
+				v.Rate = 0
+				v:Clear()
+			elseif v.Enabled ~= nil then
+				v.Enabled = false
+			end
+			if v.Transparency ~= nil then
+				v.Transparency = 1
+			end
+		end)
+	end
+
+	local function getSamuraiFXFolder()
+		local other = ReplicatedStorage:FindFirstChild("Other")
+		return other and other:FindFirstChild("SamuraiEffects")
+	end
+
+	VisualFPS:AddCheckbox("NoSamuraiFX", {
+		Text = "No Samurai Effects",
+		Default = false,
+		Callback = function(state)
+			disconnect("NoSamuraiFX_Added")
+
+			if state then
+				local folder = getSamuraiFXFolder()
+				if not folder then
+					Library:Notify({ Title = "No Samurai Effects", Description = "SamuraiEffects folder not found", Time = 3 })
+					return
+				end
+
+				for _, v in ipairs(folder:GetDescendants()) do
+					disableSamuraiFX(v)
+				end
+
+				track("NoSamuraiFX_Added", folder.DescendantAdded:Connect(function(v)
+					if Toggles.NoSamuraiFX and Toggles.NoSamuraiFX.Value then
+						disableSamuraiFX(v)
+					end
+				end))
+
+				Library:Notify({ Title = "No Samurai Effects", Description = "Enabled", Time = 2 })
+			else
+				for v, snapshot in pairs(originalSamuraiFX) do
+					if v and v.Parent then
+						pcall(function()
+							if snapshot.Enabled ~= nil then v.Enabled = snapshot.Enabled end
+							if snapshot.Transparency ~= nil then v.Transparency = snapshot.Transparency end
+							if snapshot.Volume ~= nil then v.Volume = snapshot.Volume end
+						end)
+					end
+				end
+				table.clear(originalSamuraiFX)
+				Library:Notify({ Title = "No Samurai Effects", Description = "Disabled", Time = 2 })
+			end
+		end,
+	})
+end
+
 VisualFPS:AddCheckbox("FullBright", {
 	Text = "Full Bright",
 	Default = false,
@@ -15756,6 +15839,9 @@ Library:OnUnload(function()
 	end
 	if Toggles.NoGrass and Toggles.NoGrass.Value then
 		Toggles.NoGrass:SetValue(false)
+	end
+	if Toggles.NoSamuraiFX and Toggles.NoSamuraiFX.Value then
+		Toggles.NoSamuraiFX:SetValue(false)
 	end
 	if Toggles.LowQualityLevel and Toggles.LowQualityLevel.Value then
 		Toggles.LowQualityLevel:SetValue(false)
