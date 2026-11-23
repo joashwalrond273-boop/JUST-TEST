@@ -11215,7 +11215,19 @@ FarmlandGroup:AddCheckbox("Harvest", {
 FarmlandGroup:AddDivider()
 
 FarmlandGroup:AddDropdown("FarmlandSlot", {
-	Text = "Tool Slot",
+	Text = "Farmland Slot",
+	Values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+	Default = "5",
+})
+
+FarmlandGroup:AddDropdown("PlantSlot", {
+	Text = "Plant Slot",
+	Values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+	Default = "5",
+})
+
+FarmlandGroup:AddDropdown("HarvestSlot", {
+	Text = "Harvest Slot",
 	Values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
 	Default = "5",
 })
@@ -11283,7 +11295,7 @@ Toggles.Harvest:OnChanged(function()
 
 		if not crop then return end
 
-		local slot = tonumber(Options.AutoChopSlot and Options.AutoChopSlot.Value) or 1
+		local slot = tonumber(Options.HarvestSlot and Options.HarvestSlot.Value) or 5
 		pcall(function()
 			TSG.HarvestRemote:FireServer(slot, crop)
 		end)
@@ -11440,8 +11452,8 @@ Toggles.Farmland:OnChanged(function()
 end)
 
 -- Plant: fires the plant remote as plant(slot, cropId, farmlandObject). Same idea
--- as Farmland - the shovel is swapped in automatically - but it runs on a tight
--- fixed interval so crops go in as fast as the tiles appear.
+-- as Farmland - the shovel is swapped in automatically - but it plants the tile
+-- the player walks over, once per grid cell.
 Toggles.Plant:OnChanged(function()
 	disconnect("Plant")
 
@@ -11451,7 +11463,7 @@ Toggles.Plant:OnChanged(function()
 		if not (Toggles.Farmland and Toggles.Farmland.Value) then
 			local equip = TSG.EquipHotbarRemote
 			if equip and FarmlandRestoreTool and FarmlandRestoreTool ~= 6 then
-				local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+				local slot = tonumber(Options.PlantSlot and Options.PlantSlot.Value) or 5
 				pcall(function()
 					equip:InvokeServer("inventory", slot, FarmlandRestoreTool)
 				end)
@@ -11467,7 +11479,7 @@ Toggles.Plant:OnChanged(function()
 		return
 	end
 
-	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+	local slot = tonumber(Options.PlantSlot and Options.PlantSlot.Value) or 5
 
 	if FarmlandRestoreTool == nil then
 		FarmlandRestoreTool = GetHeldToolId()
@@ -11487,6 +11499,10 @@ Toggles.Plant:OnChanged(function()
 	}
 
 	local lastPlace = 0
+	-- Last grid cell a plant was attempted for. Gating on the cell means a tile is
+	-- planted once as it passes underfoot, so standing on one never re-fires the
+	-- remote in a loop - re-firing was what made this lag once the farm grew.
+	local lastCX, lastCZ = nil, nil
 
 	local function ensureShovel()
 		local equip = TSG.EquipHotbarRemote
@@ -11534,11 +11550,20 @@ Toggles.Plant:OnChanged(function()
 	track("Plant", RunService.Heartbeat:Connect(function()
 		if not Toggles.Plant.Value or not isAlive() then return end
 
-		-- Fixed tight interval (not the Delay slider) so planting keeps up with the
-		-- tiles Farmland drops.
+		local root = getRootPart()
+		if not root then return end
+
+		-- Cheap early-out: only act when the player steps into a new 4-stud cell, so
+		-- each tile is planted exactly once as it passes underfoot.
+		local cellX = math.floor(root.Position.X / FARM_CELL + 0.5)
+		local cellZ = math.floor(root.Position.Z / FARM_CELL + 0.5)
+		if cellX == lastCX and cellZ == lastCZ then return end
+
+		-- Tiny gap so the tile Farmland just dropped has registered.
 		if tick() - lastPlace < 0.05 then return end
 		lastPlace = tick()
 
+		lastCX, lastCZ = cellX, cellZ
 		pcall(plantPass)
 	end))
 end)
@@ -13714,25 +13739,13 @@ VisualFPS:AddCheckbox("NoWaterBlur", {
 	Default = false,
 	Callback = function(state)
 		disconnect("NoWaterBlur_ChildAdded")
-		disconnect("NoWaterBlur_WaterChanged")
 		disconnect("NoWaterBlur_BlurChanged")
 		local lighting = game:GetService("Lighting")
-		local water = lighting:FindFirstChild("water")
 		local waterBlur = lighting:FindFirstChild("waterBlur")
 
+		-- Only the blur is touched here. This used to disable Lighting.water as
+		-- well, which is the game's ocean - that is what made the water vanish.
 		if state then
-			local function disableWater(child)
-				if child and child.Name == "water" then
-					pcall(function() child.Enabled = false end)
-					disconnect("NoWaterBlur_WaterChanged")
-					track("NoWaterBlur_WaterChanged", child:GetPropertyChangedSignal("Enabled"):Connect(function()
-						if Toggles.NoWaterBlur and Toggles.NoWaterBlur.Value and child.Enabled then
-							pcall(function() child.Enabled = false end)
-						end
-					end))
-				end
-			end
-
 			local function disableBlur(child)
 				if child and child.Name == "waterBlur" then
 					pcall(function() child.Enabled = false end)
@@ -13745,21 +13758,14 @@ VisualFPS:AddCheckbox("NoWaterBlur", {
 				end
 			end
 
-			if water then
-				disableWater(water)
-			end
 			if waterBlur then
 				disableBlur(waterBlur)
 			end
 
 			track("NoWaterBlur_ChildAdded", lighting.ChildAdded:Connect(function(child)
-				disableWater(child)
 				disableBlur(child)
 			end))
 		else
-			if water then
-				pcall(function() water.Enabled = true end)
-			end
 			if waterBlur then
 				pcall(function() waterBlur.Enabled = true end)
 			end
