@@ -297,6 +297,9 @@ end)
 
 local function getChopTargetPart(obj)
 	if not obj then return nil end
+	if obj:IsA("BasePart") then
+		return obj
+	end
 	local primary = obj.PrimaryPart
 	if primary and primary:IsA("BasePart") then
 		return primary
@@ -341,6 +344,9 @@ TSG.ShieldHitRemote = resolvePath(ReplicatedStorage, "remoteInterface", "charact
 TSG.MeleePlayerRemote = (keyedRemotes and rawget(keyedRemotes, "meleePlayer")) or (interactionsFolder and interactionsFolder:FindFirstChild("meleePlayer"))
 TSG.MineRemote = (keyedRemotes and rawget(keyedRemotes, "mine")) or (interactionsFolder and interactionsFolder:FindFirstChild("mine"))
 TSG.ChopRemote = (keyedRemotes and rawget(keyedRemotes, "chop")) or (interactionsFolder and interactionsFolder:FindFirstChild("chop"))
+-- Crop harvesting. Auto Chop fires this as harvest(slot, crop) for a child of
+-- workspace.farmland.
+TSG.HarvestRemote = (keyedRemotes and rawget(keyedRemotes, "harvest")) or (interactionsFolder and interactionsFolder:FindFirstChild("harvest"))
 TSG.MeleeAI = interactionsFolder and interactionsFolder:FindFirstChild("meleeAI")
 TSG.BuildRemote = (keyedRemotes and rawget(keyedRemotes, "build")) or (interactionsFolder and interactionsFolder:FindFirstChild("build"))
 TSG.CraftRemote = (keyedRemotes and rawget(keyedRemotes, "craft")) or (interactionsFolder and interactionsFolder:FindFirstChild("craft"))
@@ -11658,6 +11664,9 @@ Toggles.AutoMine:OnChanged(function()
 end)
 
 -- ==========================================
+-- Both farming remotes are used: trees and plants go through the chop remote as
+-- before, while crops planted under workspace.farmland are harvested with the
+-- harvest remote, which takes the slot and the crop only.
 local function chopObject(obj)
 	local slot = tonumber(Options.AutoChopSlot.Value) or 1
 	local part = getChopTargetPart(obj)
@@ -11676,29 +11685,62 @@ local function autoChop()
 
 	local root = getRootPart()
 	if not root then return end
-	local folder = workspace:FindFirstChild("worldResources") and workspace.worldResources:FindFirstChild("choppable")
-	if not folder then return end
 	local maxRange = (Options.AutoChopRange and Options.AutoChopRange.Value) or 30
 	local nameFilter = Options.AutoChopNameFilter and Options.AutoChopNameFilter.Value or ""
+	local didHit = false
+
+	-- Nearest choppable node in range.
 	local closest, dist = nil, maxRange
-	for _, subfolder in ipairs(folder:GetChildren()) do
-		if subfolder:IsA("Folder") then
-			for _, obj in ipairs(subfolder:GetChildren()) do
-				if resourceNameMatches(obj, nameFilter) then
-					local part = getChopTargetPart(obj)
-					if part then
-						local d = getFlatDistance(root.Position, part.Position)
-						if d < dist then
-							closest, dist = obj, d
+	local folder = getChoppableFolder()
+	if folder then
+		for _, subfolder in ipairs(folder:GetChildren()) do
+			if subfolder:IsA("Folder") then
+				for _, obj in ipairs(subfolder:GetChildren()) do
+					if resourceNameMatches(obj, nameFilter) then
+						local part = getChopTargetPart(obj)
+						if part then
+							local d = getFlatDistance(root.Position, part.Position)
+							if d < dist then
+								closest, dist = obj, d
+							end
 						end
 					end
 				end
 			end
 		end
 	end
-	if closest then
-		lastAutoChopHit = tick()
+	if closest and TSG.ChopRemote then
 		chopObject(closest)
+		didHit = true
+	end
+
+	-- Nearest crop in range. Harvest is a separate remote, so a crop does not
+	-- stop the chop pass above from firing on the same tick.
+	local farmland = workspace:FindFirstChild("farmland")
+	if farmland and TSG.HarvestRemote then
+		local slot = tonumber(Options.AutoChopSlot.Value) or 1
+		local crop, cropDist = nil, maxRange
+		for _, obj in ipairs(farmland:GetChildren()) do
+			if resourceNameMatches(obj, nameFilter) then
+				local part = getChopTargetPart(obj)
+				if part then
+					local d = getFlatDistance(root.Position, part.Position)
+					if d < cropDist then
+						crop, cropDist = obj, d
+					end
+				end
+			end
+		end
+		if crop then
+			pcall(function()
+				TSG.HarvestRemote:FireServer(slot, crop)
+			end)
+			didHit = true
+		end
+	end
+
+	if didHit then
+		lastAutoChopHit = tick()
 	end
 end
 
