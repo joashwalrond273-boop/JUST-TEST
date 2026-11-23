@@ -11121,7 +11121,6 @@ Toggles.Farmland:OnChanged(function()
 		-- The grid cell under the player's feet.
 		local cellX = math.floor(root.Position.X / size + 0.5) * size
 		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
-		local y = root.Position.Y
 
 		-- Fill sideways along whichever world axis the player is NOT facing, so the
 		-- rows stay parallel and the plot grows straight.
@@ -11132,6 +11131,17 @@ Toggles.Farmland:OnChanged(function()
 			sideX, sideZ = 0, size
 		else
 			sideX, sideZ = size, 0
+		end
+
+		-- Place on the ground, not at hip height. root.Position sits about 3 studs
+		-- above the feet (the build tools use Y - 3 for the same reason), so raycast
+		-- straight down to find the real surface height under each tile.
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
+		local function groundY(x, z)
+			local hit = workspace:Raycast(Vector3.new(x, root.Position.Y + 4, z), Vector3.new(0, -40, 0), rayParams)
+			return hit and hit.Position.Y or (root.Position.Y - 3)
 		end
 
 		local folder = workspace:FindFirstChild("farmland")
@@ -11153,10 +11163,11 @@ Toggles.Farmland:OnChanged(function()
 		-- Under the feet and the tile beside it, skipping any that already exist.
 		local targets = {}
 		local cells = {
-			Vector3.new(cellX, y, cellZ),
-			Vector3.new(cellX + sideX, y, cellZ + sideZ),
+			Vector3.new(cellX, 0, cellZ),
+			Vector3.new(cellX + sideX, 0, cellZ + sideZ),
 		}
-		for _, pos in ipairs(cells) do
+		for _, cell in ipairs(cells) do
+			local pos = Vector3.new(cell.X, groundY(cell.X, cell.Z), cell.Z)
 			if not isOccupied(pos) then
 				table.insert(targets, pos)
 			end
@@ -11165,7 +11176,7 @@ Toggles.Farmland:OnChanged(function()
 		if #targets == 0 then return end
 
 		-- The server only accepts a placement while the shovel is in hand, so swap
-		-- it in, fire, then give the previous tool back.
+		-- it in, wait until it is really held, fire, then give the previous tool back.
 		local equip = TSG.EquipHotbarRemote
 		local restoreId = equip and GetHeldToolId() or nil
 		local swapped = false
@@ -11173,6 +11184,12 @@ Toggles.Farmland:OnChanged(function()
 			pcall(function()
 				equip:InvokeServer("inventory", slot, 6)
 			end)
+			-- Firing before the shovel has actually arrived makes the server drop the
+			-- placement, so wait for it (bounded) instead of guessing with a delay.
+			local deadline = tick() + 0.5
+			while GetHeldToolId() ~= 6 and tick() < deadline do
+				task.wait(0.02)
+			end
 			swapped = true
 		end
 
@@ -11183,6 +11200,7 @@ Toggles.Farmland:OnChanged(function()
 		end
 
 		if swapped and restoreId then
+			task.wait(0.05)
 			pcall(function()
 				equip:InvokeServer("inventory", slot, restoreId)
 			end)
