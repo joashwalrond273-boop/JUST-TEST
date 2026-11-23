@@ -11056,24 +11056,25 @@ FarmChop:AddSlider("AutoChopSpeed", {
 FarmChop:AddDivider()
 
 -- ==========================================
--- FARMING tab. The Farmland checkbox equips the shovel (item id 6) and keeps
--- firing the createFarmland remote to lay tiles in a straight line ahead of the
--- player. Tab handle and last-place timestamp are globals on purpose: the main
--- chunk is at Luau's 200-local register limit.
-FarmlandTab = OreFarmRightTabBox:AddTab("FARMING", "sprout")
+-- FARMING groupbox, sitting under the Auto Mine / Auto Chop tabbox rather than
+-- beside it. The Farmland checkbox swaps the shovel (item id 6) into the chosen
+-- hotbar slot just long enough to fire the createFarmland remote, then hands the
+-- previous tool back, so it works without the player holding the shovel. Handle
+-- and state are globals on purpose: the main chunk is at Luau's 200-local limit.
+FarmlandGroup = Tabs.OreFactory:AddRightGroupbox("FARMING", "sprout")
 
-FarmlandTab:AddCheckbox("Farmland", {
+FarmlandGroup:AddCheckbox("Farmland", {
 	Text = "Farmland",
 	Default = false,
 })
 
-FarmlandTab:AddDropdown("FarmlandSlot", {
+FarmlandGroup:AddDropdown("FarmlandSlot", {
 	Text = "Tool Slot",
 	Values = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
 	Default = "5",
 })
 
-FarmlandTab:AddSlider("FarmlandTileSize", {
+FarmlandGroup:AddSlider("FarmlandTileSize", {
 	Text = "Tile Size",
 	Default = 4,
 	Min = 1,
@@ -11082,7 +11083,7 @@ FarmlandTab:AddSlider("FarmlandTileSize", {
 	Compact = true,
 })
 
-FarmlandTab:AddSlider("FarmlandDelay", {
+FarmlandGroup:AddSlider("FarmlandDelay", {
 	Text = "Delay",
 	Default = 0.5,
 	Min = 0.1,
@@ -11091,9 +11092,10 @@ FarmlandTab:AddSlider("FarmlandDelay", {
 	Compact = true,
 })
 
-FarmlandTab:AddDivider()
+FarmlandGroup:AddDivider()
 
 FarmlandLastPlace = 0
+FarmlandBusy = false
 
 Toggles.Farmland:OnChanged(function()
 	disconnect("Farmland")
@@ -11107,17 +11109,9 @@ Toggles.Farmland:OnChanged(function()
 
 	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
 
-	-- Put the shovel in the chosen hotbar slot first so the server accepts the
-	-- placement that follows. 6 is the shovel item id.
-	if TSG.EquipHotbarRemote then
-		pcall(function()
-			TSG.EquipHotbarRemote:InvokeServer("inventory", slot, 6)
-		end)
-	end
-
 	-- Places 2 tiles in a line ahead of the player. Local on purpose so it stays
 	-- off the main chunk's register budget.
-	local function placeAhead()
+	local function placePass()
 		local root = getRootPart()
 		if not root then return end
 
@@ -11144,13 +11138,13 @@ Toggles.Farmland:OnChanged(function()
 			stepZ = forward.Z >= 0 and size or -size
 		end
 
+		-- Collect only the tiles that are actually free, so a running loop does not
+		-- spam one coordinate.
+		local folder = workspace:FindFirstChild("farmland")
+		local targets = {}
 		for i = 1, 2 do
 			local pos = Vector3.new(baseX + stepX * i, y, baseZ + stepZ * i)
-
-			-- Skip a spot that already has farmland so a loop that keeps running
-			-- does not spam the same coordinate.
 			local occupied = false
-			local folder = workspace:FindFirstChild("farmland")
 			if folder then
 				for _, obj in ipairs(folder:GetChildren()) do
 					local part = getChopTargetPart(obj)
@@ -11164,21 +11158,47 @@ Toggles.Farmland:OnChanged(function()
 					end
 				end
 			end
-
 			if not occupied then
-				pcall(function()
-					TSG.CreateFarmlandRemote:FireServer(slot, pos, 0)
-				end)
+				table.insert(targets, pos)
 			end
+		end
+
+		if #targets == 0 then return end
+
+		-- The server only accepts a placement while the shovel is in hand, so swap
+		-- it in, fire, then give the previous tool back.
+		local equip = TSG.EquipHotbarRemote
+		local restoreId = equip and GetHeldToolId() or nil
+		local swapped = false
+		if equip and restoreId ~= 6 then
+			pcall(function()
+				equip:InvokeServer("inventory", slot, 6)
+			end)
+			swapped = true
+		end
+
+		for _, pos in ipairs(targets) do
+			pcall(function()
+				TSG.CreateFarmlandRemote:FireServer(slot, pos, 0)
+			end)
+		end
+
+		if swapped and restoreId then
+			pcall(function()
+				equip:InvokeServer("inventory", slot, restoreId)
+			end)
 		end
 	end
 
 	track("Farmland", RunService.Heartbeat:Connect(function()
 		if not Toggles.Farmland.Value or not isAlive() then return end
+		if FarmlandBusy then return end
 		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.5
 		if tick() - FarmlandLastPlace < delay then return end
 		FarmlandLastPlace = tick()
-		placeAhead()
+		FarmlandBusy = true
+		pcall(placePass)
+		FarmlandBusy = false
 	end))
 end)
 
