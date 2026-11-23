@@ -13817,11 +13817,9 @@ do
 	local REMOVE_PATHS = {
 		{ "RS", "Other", "SamuraiEffects" },
 		{ "RS", "Other", "Explosion" },
-		{ "RS", "Other", "CrashingWave" },
 		{ "RS", "Other", "CannonSmoke" },
 		{ "RS", "Other", "CannonExplosion" },
 		{ "RS", "Particles", "UpwardsIceSmoke" },
-		{ "RS", "Particles", "SwimPPart" },
 		{ "RS", "game", "ImperialShip", "Body", "FIRE" },
 		{ "RS", "game", "Items", "models", "Torch", "FireEmitter" },
 		{ "SPS", "ArenaController", "Particles", "Clouds" },
