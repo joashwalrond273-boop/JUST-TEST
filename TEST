@@ -8750,6 +8750,15 @@ local function phantomModeLoop(dt)
 		if myHum then
 			workspace.CurrentCamera.CameraSubject = myHum
 		end
+
+		-- A specific victim was picked and is now dead or gone, so switch Orbital
+		-- Rage off instead of hovering over a corpse. With "All" selected nothing
+		-- is switched off - it keeps tracking whoever is in range.
+		local targetSetting = Options.KillAuraTarget and Options.KillAuraTarget.Value or "All"
+		if Toggles.PhantomMode.Value
+			and typeof(targetSetting) == "string" and targetSetting ~= "" and targetSetting ~= "All" then
+			Toggles.PhantomMode:SetValue(false)
+		end
 	end
 end
 
@@ -10320,6 +10329,8 @@ Toggles.SpeedHack:OnChanged(function()
 		Library:Notify({ Title = "Speed", Description = "Enabled", Time = 2 })
 		track("SpeedHack", RunService.Heartbeat:Connect(function(dt)
 			if not isAlive() then return end
+			-- Freecam pins the body in place; translating it here would drag it along.
+			if FreecamState.active then return end
 			local humanoid = getHumanoid()
 			local root = getRootPart()
 			if not humanoid or not root then return end
@@ -10477,6 +10488,8 @@ Toggles.PlusSpeedBoost:OnChanged(function()
 		track("PlusSpeedBoost", RunService.Heartbeat:Connect(function(dt)
 			if not isAlive() then return end
 			if Toggles.SpeedHack and Toggles.SpeedHack.Value then return end
+			-- Freecam pins the body in place; translating it here would drag it along.
+			if FreecamState.active then return end
 			local humanoid = getHumanoid()
 			local root = getRootPart()
 			if not humanoid or not root then return end
@@ -12488,8 +12501,9 @@ track("TeleportResetRespawn", LocalPlayer.CharacterAdded:Connect(function()
 
 	disconnect("TeleportGlue")
 
-	-- Non-glue teleports keep the original short pause.
-	if not glue then
+	-- Fling-guard teleports (glue == true) warp the instant the character exists;
+	-- everything else pauses a second so the fresh character has settled first.
+	if glue ~= true then
 		task.wait(1)
 	end
 
@@ -12514,10 +12528,10 @@ track("TeleportResetRespawn", LocalPlayer.CharacterAdded:Connect(function()
 	root.AssemblyAngularVelocity = Vector3.zero
 
 	if glue then
-		-- Keep the destination pinned for only a few frames so the solver cannot
-		-- build up the ejection impulse that shows up as a fling, then let go.
-		-- No PlatformStand and no long hold, so the player is never left glued
-		-- in the air unable to move after a teleport.
+		-- true   -> meteor fling-guard: pin for only a few frames so the solver
+		--           cannot build up the ejection impulse that shows up as a fling.
+		-- number -> explicit hold: stay pinned on the spot for that many seconds.
+		local holdTime = glue == true and 0.1 or glue
 		local glueStart = tick()
 		track("TeleportGlue", RunService.Stepped:Connect(function()
 			local glueRoot = getRootPart()
@@ -12528,7 +12542,7 @@ track("TeleportResetRespawn", LocalPlayer.CharacterAdded:Connect(function()
 			glueRoot.AssemblyAngularVelocity = Vector3.zero
 			glueRoot.CFrame = cf
 
-			if tick() - glueStart >= 0.1 then
+			if tick() - glueStart >= holdTime then
 				disconnect("TeleportGlue")
 			end
 		end))
@@ -12758,7 +12772,9 @@ BossLocationsGroup:AddButton({
 BossLocationsGroup:AddButton({
 	Text = "Spider",
 	Func = function()
-		resetAndTeleport(Vector3.new(-419.79, -89.69, 391.27), "Spider", true)
+		-- Third argument is the glue hold time in seconds: warp 1s after respawn,
+		-- then stay pinned on the spot for 1s.
+		resetAndTeleport(Vector3.new(-419.79, -89.69, 391.27), "Spider", 1)
 	end,
 }):AddButton({
 	Text = "Titan",
