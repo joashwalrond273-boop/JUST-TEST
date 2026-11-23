@@ -13036,6 +13036,38 @@ local VisualFPS = Tabs.Visuals:AddRightGroupbox("FPS BOOSTER", "zap")
 -- the main chunk is already at Luau's 200-local register limit.
 TSG_AntiLagGroup = Tabs.Visuals:AddRightGroupbox("ANTI-LAG PLUS", "wind")
 
+-- One-switch performance preset. Driving the existing toggles through
+-- :SetValue() means each of their own callbacks (and cleanup) still runs, so
+-- this is just an automation of what you would otherwise click by hand.
+-- Global on purpose: the main chunk is at Luau's 200-local register limit.
+TSG_MaxPerformanceMembers = {
+	"LowTextures",
+	"DisableRenderFog",
+	"NoWaterBlur",
+	"NoGrass",
+	"DisableEffects",
+	"RemoveParticles",
+	"KillHeavyPostEffects",
+	"LowQualityLevel",
+	"BlockRemoteSpam",
+}
+
+VisualFPS:AddCheckbox("MaxPerformance", {
+	Text = "Max Performance",
+	Default = false,
+	Callback = function(state)
+		local members = TSG_MaxPerformanceMembers
+		for i = 1, #members do
+			local toggle = Toggles[members[i]]
+			if toggle then
+				pcall(function()
+					toggle:SetValue(state)
+				end)
+			end
+		end
+	end,
+})
+
 -- ==========================================
 -- Flips CastShadow on every part of one character. The old code opened a fresh
 -- pcall (and a closure) for each individual part; one protected call per
@@ -13239,7 +13271,18 @@ VisualFPS:AddCheckbox("NoGrass", {
 	Callback = function(state)
 		if state then
 			pcall(function()
-				loadstring(game:HttpGet("https://raw.githubusercontent.com/joashwalrond273-boop/Silent-Aim/refs/heads/main/No%20grass"))()
+				local terrain = workspace:FindFirstChildOfClass("Terrain")
+				if not terrain then
+					repeat
+						task.wait()
+					until workspace:FindFirstChildOfClass("Terrain")
+					terrain = workspace:FindFirstChildOfClass("Terrain")
+				end
+				if sethiddenproperty then
+					sethiddenproperty(terrain, "Decoration", false)
+				else
+					warn("[URIEL]: No Grass needs sethiddenproperty to toggle terrain decorations")
+				end
 			end)
 		else
 			pcall(function()
@@ -15722,6 +15765,9 @@ Library:OnUnload(function()
 	end
 	if Toggles.LowTextures and Toggles.LowTextures.Value then
 		Toggles.LowTextures:SetValue(false)
+	end
+	if Toggles.MaxPerformance and Toggles.MaxPerformance.Value then
+		Toggles.MaxPerformance:SetValue(false)
 	end
 
 	pcall(function() TSG_StopWeatherOverride() end)
