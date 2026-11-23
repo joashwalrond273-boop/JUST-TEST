@@ -11074,15 +11074,6 @@ FarmlandGroup:AddDropdown("FarmlandSlot", {
 	Default = "5",
 })
 
-FarmlandGroup:AddSlider("FarmlandTileSize", {
-	Text = "Tile Size",
-	Default = 4,
-	Min = 1,
-	Max = 20,
-	Rounding = 1,
-	Compact = true,
-})
-
 FarmlandGroup:AddSlider("FarmlandDelay", {
 	Text = "Delay",
 	Default = 0.1,
@@ -11097,6 +11088,8 @@ FarmlandGroup:AddDivider()
 FarmlandLastPlace = 0
 FarmlandBusy = false
 FarmlandRestoreTool = nil
+FarmlandLastCX = nil
+FarmlandLastCZ = nil
 
 Toggles.Farmland:OnChanged(function()
 	disconnect("Farmland")
@@ -11127,6 +11120,10 @@ Toggles.Farmland:OnChanged(function()
 		FarmlandRestoreTool = GetHeldToolId()
 	end
 
+	-- Let the first pass run even if placement was last left on this same cell.
+	FarmlandLastCX = nil
+	FarmlandLastCZ = nil
+
 	-- Keep the shovel in hand the whole time the toggle is on. Picking another
 	-- hotbar slot swaps it out, so this is re-checked every pass - but it only ever
 	-- swaps the shovel IN (no per-pass restore), which is what keeps it fast.
@@ -11138,29 +11135,54 @@ Toggles.Farmland:OnChanged(function()
 		end)
 	end
 
-	-- Places two tiles one row ahead of the player, side by side, on the world
-	-- grid, so walking lays a straight two-wide line. Local on purpose so it stays
-	-- off the main chunk's register budget.
-	local function placePass()
+	-- Places two tiles per pass on a fixed 4-stud world grid: one cell ahead of the
+	-- player and one cell beside it, so walking lays a 2-wide lane and every step
+	-- drops a fresh pair. (A forward-only pair cannot do this - the near cell is
+	-- always already laid by the previous pass, so only one new tile would go
+	-- down.) Local on purpose so it stays off the main chunk's register budget.
+	local function placePass(cellX, cellZ)
 		local root = getRootPart()
 		if not root then return end
 
-		local size = (Options.FarmlandTileSize and Options.FarmlandTileSize.Value) or 4
+		local size = 4
 
-		-- Grid cell under the feet, then one tile further along the direction the
-		-- player is facing for the row itself.
-		local cellX = math.floor(root.Position.X / size + 0.5) * size
-		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
-
+		-- Step one tile along whichever world axis the player faces most, then take
+		-- the perpendicular as the "side" axis.
 		local look = root.CFrame.LookVector
-		local forward = Vector3.new(look.X, 0, look.Z)
-		local stepX, stepZ, sideX, sideZ = 0, 0, 0, 0
-		if math.abs(forward.X) >= math.abs(forward.Z) then
-			stepX = forward.X >= 0 and size or -size
-			sideX, sideZ = 0, size
+		local stepX, stepZ = 0, 0
+		if math.abs(look.X) >= math.abs(look.Z) then
+			stepX = look.X >= 0 and size or -size
 		else
-			stepZ = forward.Z >= 0 and size or -size
-			sideX, sideZ = size, 0
+			stepZ = look.Z >= 0 and size or -size
+		end
+		local sideX, sideZ = -stepZ, stepX
+
+		-- The two cells in front of the player, side by side.
+		local cells = {
+			{ x = cellX + stepX, z = cellZ + stepZ },
+			{ x = cellX + stepX + sideX, z = cellZ + stepZ + sideZ },
+		}
+
+		-- One sweep over the farmland marks any of the two cells that are already
+		-- taken, instead of scanning the whole folder once per tile.
+		local occupied = { false, false }
+		local folder = workspace:FindFirstChild("farmland")
+		if folder then
+			local limit = (size * 0.5) * (size * 0.5)
+			for _, obj in ipairs(folder:GetChildren()) do
+				local part = getChopTargetPart(obj)
+				if part then
+					for i = 1, 2 do
+						if not occupied[i] then
+							local dx = part.Position.X - cells[i].x
+							local dz = part.Position.Z - cells[i].z
+							if dx * dx + dz * dz < limit then
+								occupied[i] = true
+							end
+						end
+					end
+				end
+			end
 		end
 
 		-- Place on the ground, not at hip height (root.Position sits about 3 studs
@@ -11174,34 +11196,10 @@ Toggles.Farmland:OnChanged(function()
 			return hit and hit.Position.Y or (root.Position.Y - 3)
 		end
 
-		local folder = workspace:FindFirstChild("farmland")
-		local function isOccupied(pos)
-			if not folder then return false end
-			for _, obj in ipairs(folder:GetChildren()) do
-				local part = getChopTargetPart(obj)
-				if part then
-					local d = (Vector3.new(part.Position.X, 0, part.Position.Z)
-						- Vector3.new(pos.X, 0, pos.Z)).Magnitude
-					if d < size * 0.5 then
-						return true
-					end
-				end
-			end
-			return false
-		end
-
-		-- The two tiles of the row ahead of the player, skipping any that exist.
-		local rowX = cellX + stepX
-		local rowZ = cellZ + stepZ
 		local targets = {}
-		local cells = {
-			Vector3.new(rowX, 0, rowZ),
-			Vector3.new(rowX + sideX, 0, rowZ + sideZ),
-		}
-		for _, cell in ipairs(cells) do
-			local pos = Vector3.new(cell.X, groundY(cell.X, cell.Z), cell.Z)
-			if not isOccupied(pos) then
-				table.insert(targets, pos)
+		for i = 1, 2 do
+			if not occupied[i] then
+				table.insert(targets, Vector3.new(cells[i].x, groundY(cells[i].x, cells[i].z), cells[i].z))
 			end
 		end
 
@@ -11218,11 +11216,25 @@ Toggles.Farmland:OnChanged(function()
 	track("Farmland", RunService.Heartbeat:Connect(function()
 		if not Toggles.Farmland.Value or not isAlive() then return end
 		if FarmlandBusy then return end
+
+		-- Cheap early-out: only do any work when the player steps into a new 4-stud
+		-- grid cell. Standing still therefore costs two floors per frame, which is
+		-- what stops the folder scan from lagging the game.
+		local root = getRootPart()
+		if not root then return end
+		local size = 4
+		local cellX = math.floor(root.Position.X / size + 0.5) * size
+		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
+		if cellX == FarmlandLastCX and cellZ == FarmlandLastCZ then return end
+
 		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.1
 		if tick() - FarmlandLastPlace < delay then return end
+
 		FarmlandLastPlace = tick()
+		FarmlandLastCX = cellX
+		FarmlandLastCZ = cellZ
 		FarmlandBusy = true
-		pcall(placePass)
+		pcall(placePass, cellX, cellZ)
 		FarmlandBusy = false
 	end))
 end)
