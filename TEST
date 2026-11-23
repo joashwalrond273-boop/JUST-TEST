@@ -11135,10 +11135,12 @@ Toggles.Farmland:OnChanged(function()
 		end)
 	end
 
-	-- Places two tiles per pass on a fixed 4-stud world grid, in a line straight
-	-- ahead of the player: one four studs out and the next four studs past that, so
-	-- walking keeps a two-tile line running out in front. Local on purpose so it
-	-- stays off the main chunk's register budget.
+	-- Places two tiles per pass on a fixed 4-stud world grid: one cell directly
+	-- ahead of the player and one diagonally ahead (one step forward plus one step
+	-- to the side). Side by side is the only layout that can lay two *brand-new*
+	-- tiles every step - a 1-wide line ahead always reuses the near cell from the
+	-- previous pass, so it would only add one. Local on purpose so it stays off the
+	-- main chunk's register budget.
 	local function placePass(cellX, cellZ)
 		local root = getRootPart()
 		if not root then return end
@@ -11154,10 +11156,13 @@ Toggles.Farmland:OnChanged(function()
 			stepZ = look.Z >= 0 and size or -size
 		end
 
-		-- One tile four studs ahead, another four studs past that (eight total).
+		-- Forward one cell, then one more cell to the side of it. Perpendicular of
+		-- (stepX, stepZ) is (-stepZ, stepX).
+		local sideX, sideZ = -stepZ, stepX
+
 		local cells = {
 			{ x = cellX + stepX, z = cellZ + stepZ },
-			{ x = cellX + stepX * 2, z = cellZ + stepZ * 2 },
+			{ x = cellX + stepX + sideX, z = cellZ + stepZ + sideZ },
 		}
 
 		-- One sweep over the farmland marks any of the two cells that are already
