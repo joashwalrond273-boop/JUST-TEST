@@ -11078,8 +11078,13 @@ FarmlandGroup:AddCheckbox("Plant", {
 
 FarmlandGroup:AddDropdown("PlantCrop", {
 	Text = "Crop",
-	Values = {"Cabbage", "Carrot", "Berries"},
+	Values = {"Cabbage", "Carrot", "Berries", "Peppers", "Wheat"},
 	Default = "Carrot",
+})
+
+FarmlandGroup:AddCheckbox("Harvest", {
+	Text = "Harvest",
+	Default = false,
 })
 
 FarmlandGroup:AddDivider()
@@ -11106,6 +11111,14 @@ FarmlandBusy = false
 FarmlandRestoreTool = nil
 FarmlandLastCX = nil
 FarmlandLastCZ = nil
+
+-- Harvest mirrors Auto Chop: ticking it turns Auto Chop on, unticking turns it off.
+Toggles.Harvest:OnChanged(function()
+	local autoChop = Toggles.AutoChop
+	if autoChop and autoChop.Value ~= Toggles.Harvest.Value then
+		autoChop:SetValue(Toggles.Harvest.Value)
+	end
+end)
 
 Toggles.Farmland:OnChanged(function()
 	disconnect("Farmland")
@@ -11258,9 +11271,8 @@ Toggles.Farmland:OnChanged(function()
 end)
 
 -- Plant: fires the plant remote as plant(slot, cropId, farmlandObject). Same idea
--- as Farmland - the shovel is swapped in automatically and the pass only runs when
--- the player steps into a new 4-stud cell, so it stays cheap. Crop ids come from
--- FoodIdMap (Cabbage 210, Carrot 95, Berries 113).
+-- as Farmland - the shovel is swapped in automatically - but it runs on a tight
+-- fixed interval so crops go in as fast as the tiles appear.
 Toggles.Plant:OnChanged(function()
 	disconnect("Plant")
 
@@ -11296,8 +11308,16 @@ Toggles.Plant:OnChanged(function()
 	-- re-fire. Weak keys so tiles that get harvested away drop out on their own.
 	PlantSeen = PlantSeen or setmetatable({}, { __mode = "k" })
 
+	-- Crop -> plant id.
+	local cropIds = {
+		Cabbage = 210,
+		Carrot = 95,
+		Berries = 113,
+		Peppers = 211,
+		Wheat = 107,
+	}
+
 	local lastPlace = 0
-	local lastCX, lastCZ
 
 	local function ensureShovel()
 		local equip = TSG.EquipHotbarRemote
@@ -11313,7 +11333,7 @@ Toggles.Plant:OnChanged(function()
 		local root = getRootPart()
 		if not root then return end
 
-		local cropId = Options.PlantCrop and FoodIdMap[Options.PlantCrop.Value]
+		local cropId = Options.PlantCrop and cropIds[Options.PlantCrop.Value]
 		if not cropId then return end
 
 		local folder = workspace:FindFirstChild("farmland")
@@ -11344,20 +11364,11 @@ Toggles.Plant:OnChanged(function()
 	track("Plant", RunService.Heartbeat:Connect(function()
 		if not Toggles.Plant.Value or not isAlive() then return end
 
-		-- Same early-out as Farmland: only work on entering a new 4-stud cell.
-		local root = getRootPart()
-		if not root then return end
-		local size = 4
-		local cellX = math.floor(root.Position.X / size + 0.5) * size
-		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
-		if cellX == lastCX and cellZ == lastCZ then return end
-
-		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.1
-		if tick() - lastPlace < delay then return end
-
+		-- Fixed tight interval (not the Delay slider) so planting keeps up with the
+		-- tiles Farmland drops.
+		if tick() - lastPlace < 0.05 then return end
 		lastPlace = tick()
-		lastCX = cellX
-		lastCZ = cellZ
+
 		pcall(plantPass)
 	end))
 end)
@@ -12053,6 +12064,12 @@ end
 
 Toggles.AutoChop:OnChanged(function()
 	disconnect("AutoChop")
+
+	-- Keep the FARMING tab's Harvest checkbox in step with Auto Chop.
+	if Toggles.Harvest and Toggles.Harvest.Value ~= Toggles.AutoChop.Value then
+		Toggles.Harvest:SetValue(Toggles.AutoChop.Value)
+	end
+
 	if Toggles.AutoChop.Value then
 		if not TSG.ChopRemote then
 			Library:Notify({ Title = "Auto Chop", Description = "Chop remote not found.", Time = 4 })
