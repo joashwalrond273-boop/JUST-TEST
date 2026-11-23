@@ -11085,10 +11085,10 @@ FarmlandGroup:AddSlider("FarmlandTileSize", {
 
 FarmlandGroup:AddSlider("FarmlandDelay", {
 	Text = "Delay",
-	Default = 0.5,
-	Min = 0.1,
+	Default = 0.1,
+	Min = 0.05,
 	Max = 3,
-	Rounding = 1,
+	Rounding = 2,
 	Compact = true,
 })
 
@@ -11096,10 +11096,23 @@ FarmlandGroup:AddDivider()
 
 FarmlandLastPlace = 0
 FarmlandBusy = false
+FarmlandRestoreTool = nil
 
 Toggles.Farmland:OnChanged(function()
 	disconnect("Farmland")
-	if not Toggles.Farmland.Value then return end
+
+	-- Switching off: put the tool the player had before back in their hands.
+	if not Toggles.Farmland.Value then
+		local equip = TSG.EquipHotbarRemote
+		if equip and FarmlandRestoreTool and FarmlandRestoreTool ~= 6 then
+			local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+			pcall(function()
+				equip:InvokeServer("inventory", slot, FarmlandRestoreTool)
+			end)
+		end
+		FarmlandRestoreTool = nil
+		return
+	end
 
 	if not TSG.CreateFarmlandRemote then
 		Library:Notify({ Title = "Farmland", Description = "createFarmland remote not found.", Time = 4 })
@@ -11109,33 +11122,50 @@ Toggles.Farmland:OnChanged(function()
 
 	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
 
-	-- Places tiles on a world grid: the cell directly under the player's feet plus
-	-- the cell beside it, so walking forward lays a line while every row is two
-	-- tiles side by side. Local on purpose so it stays off the register budget.
+	-- Remember the tool to hand back when the toggle is switched off.
+	if FarmlandRestoreTool == nil then
+		FarmlandRestoreTool = GetHeldToolId()
+	end
+
+	-- Keep the shovel in hand the whole time the toggle is on. Picking another
+	-- hotbar slot swaps it out, so this is re-checked every pass - but it only ever
+	-- swaps the shovel IN (no per-pass restore), which is what keeps it fast.
+	local function ensureShovel()
+		local equip = TSG.EquipHotbarRemote
+		if not equip or GetHeldToolId() == 6 then return end
+		pcall(function()
+			equip:InvokeServer("inventory", slot, 6)
+		end)
+	end
+
+	-- Places two tiles one row ahead of the player, side by side, on the world
+	-- grid, so walking lays a straight two-wide line. Local on purpose so it stays
+	-- off the main chunk's register budget.
 	local function placePass()
 		local root = getRootPart()
 		if not root then return end
 
 		local size = (Options.FarmlandTileSize and Options.FarmlandTileSize.Value) or 4
 
-		-- The grid cell under the player's feet.
+		-- Grid cell under the feet, then one tile further along the direction the
+		-- player is facing for the row itself.
 		local cellX = math.floor(root.Position.X / size + 0.5) * size
 		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
 
-		-- Fill sideways along whichever world axis the player is NOT facing, so the
-		-- rows stay parallel and the plot grows straight.
 		local look = root.CFrame.LookVector
 		local forward = Vector3.new(look.X, 0, look.Z)
-		local sideX, sideZ
+		local stepX, stepZ, sideX, sideZ = 0, 0, 0, 0
 		if math.abs(forward.X) >= math.abs(forward.Z) then
+			stepX = forward.X >= 0 and size or -size
 			sideX, sideZ = 0, size
 		else
+			stepZ = forward.Z >= 0 and size or -size
 			sideX, sideZ = size, 0
 		end
 
-		-- Place on the ground, not at hip height. root.Position sits about 3 studs
-		-- above the feet (the build tools use Y - 3 for the same reason), so raycast
-		-- straight down to find the real surface height under each tile.
+		-- Place on the ground, not at hip height (root.Position sits about 3 studs
+		-- above the feet), so raycast straight down to find the surface under each
+		-- tile.
 		local rayParams = RaycastParams.new()
 		rayParams.FilterType = Enum.RaycastFilterType.Exclude
 		rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
@@ -11160,11 +11190,13 @@ Toggles.Farmland:OnChanged(function()
 			return false
 		end
 
-		-- Under the feet and the tile beside it, skipping any that already exist.
+		-- The two tiles of the row ahead of the player, skipping any that exist.
+		local rowX = cellX + stepX
+		local rowZ = cellZ + stepZ
 		local targets = {}
 		local cells = {
-			Vector3.new(cellX, 0, cellZ),
-			Vector3.new(cellX + sideX, 0, cellZ + sideZ),
+			Vector3.new(rowX, 0, rowZ),
+			Vector3.new(rowX + sideX, 0, rowZ + sideZ),
 		}
 		for _, cell in ipairs(cells) do
 			local pos = Vector3.new(cell.X, groundY(cell.X, cell.Z), cell.Z)
@@ -11175,34 +11207,10 @@ Toggles.Farmland:OnChanged(function()
 
 		if #targets == 0 then return end
 
-		-- The server only accepts a placement while the shovel is in hand, so swap
-		-- it in, wait until it is really held, fire, then give the previous tool back.
-		local equip = TSG.EquipHotbarRemote
-		local restoreId = equip and GetHeldToolId() or nil
-		local swapped = false
-		if equip and restoreId ~= 6 then
-			pcall(function()
-				equip:InvokeServer("inventory", slot, 6)
-			end)
-			-- Firing before the shovel has actually arrived makes the server drop the
-			-- placement, so wait for it (bounded) instead of guessing with a delay.
-			local deadline = tick() + 0.5
-			while GetHeldToolId() ~= 6 and tick() < deadline do
-				task.wait(0.02)
-			end
-			swapped = true
-		end
-
+		ensureShovel()
 		for _, pos in ipairs(targets) do
 			pcall(function()
 				TSG.CreateFarmlandRemote:FireServer(slot, pos, 0)
-			end)
-		end
-
-		if swapped and restoreId then
-			task.wait(0.05)
-			pcall(function()
-				equip:InvokeServer("inventory", slot, restoreId)
 			end)
 		end
 	end
@@ -11210,7 +11218,7 @@ Toggles.Farmland:OnChanged(function()
 	track("Farmland", RunService.Heartbeat:Connect(function()
 		if not Toggles.Farmland.Value or not isAlive() then return end
 		if FarmlandBusy then return end
-		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.5
+		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.1
 		if tick() - FarmlandLastPlace < delay then return end
 		FarmlandLastPlace = tick()
 		FarmlandBusy = true
