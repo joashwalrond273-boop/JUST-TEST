@@ -353,6 +353,9 @@ TSG.CraftRemote = (keyedRemotes and rawget(keyedRemotes, "craft")) or (interacti
 TSG.DeleteStructureRemote = (keyedRemotes and rawget(keyedRemotes, "deleteStructure")) or (interactionsFolder and interactionsFolder:FindFirstChild("deleteStructure"))
 TSG.HitStructureRemote = (keyedRemotes and rawget(keyedRemotes, "hitStructure")) or (interactionsFolder and interactionsFolder:FindFirstChild("hitStructure")) or resolvePath(ReplicatedStorage, "remoteInterface", "interactions", "hitStructure")
 TSG.CreateFarmlandRemote = (keyedRemotes and rawget(keyedRemotes, "createFarmland")) or (interactionsFolder and interactionsFolder:FindFirstChild("createFarmland"))
+-- Planting. plant is fired as plant(slot, cropId, farmlandObject) for a child of
+-- workspace.farmland.
+TSG.PlantRemote = (keyedRemotes and rawget(keyedRemotes, "plant")) or (interactionsFolder and interactionsFolder:FindFirstChild("plant"))
 
 -- No Bear Trap DMG remote. The intercept is registered with the shared
 -- __namecall dispatcher below only while the toggle is on, so there is no
@@ -11057,16 +11060,29 @@ FarmChop:AddDivider()
 
 -- ==========================================
 -- FARMING groupbox, sitting under the Auto Mine / Auto Chop tabbox rather than
--- beside it. The Farmland checkbox swaps the shovel (item id 6) into the chosen
--- hotbar slot just long enough to fire the createFarmland remote, then hands the
--- previous tool back, so it works without the player holding the shovel. Handle
--- and state are globals on purpose: the main chunk is at Luau's 200-local limit.
+-- beside it. Both toggles swap the shovel (item id 6) into the chosen hotbar slot
+-- just long enough to fire their remote, then hand the previous tool back, so they
+-- work without the player holding the shovel. Handles and state are globals on
+-- purpose: the main chunk is at Luau's 200-local limit.
 FarmlandGroup = Tabs.OreFactory:AddRightGroupbox("FARMING", "sprout")
 
-FarmlandGroup:AddCheckbox("Farmland", {
+FarmlandGroup:AddToggle("Farmland", {
 	Text = "Farmland",
 	Default = false,
 })
+
+FarmlandGroup:AddCheckbox("Plant", {
+	Text = "Plant",
+	Default = false,
+})
+
+FarmlandGroup:AddDropdown("PlantCrop", {
+	Text = "Crop",
+	Values = {"Cabbage", "Carrot", "Berries"},
+	Default = "Carrot",
+})
+
+FarmlandGroup:AddDivider()
 
 FarmlandGroup:AddDropdown("FarmlandSlot", {
 	Text = "Tool Slot",
@@ -11238,6 +11254,111 @@ Toggles.Farmland:OnChanged(function()
 		FarmlandBusy = true
 		pcall(placePass, cellX, cellZ)
 		FarmlandBusy = false
+	end))
+end)
+
+-- Plant: fires the plant remote as plant(slot, cropId, farmlandObject). Same idea
+-- as Farmland - the shovel is swapped in automatically and the pass only runs when
+-- the player steps into a new 4-stud cell, so it stays cheap. Crop ids come from
+-- FoodIdMap (Cabbage 210, Carrot 95, Berries 113).
+Toggles.Plant:OnChanged(function()
+	disconnect("Plant")
+
+	-- Switching off: hand the previous tool back, but only if Farmland is not also
+	-- holding the shovel for us.
+	if not Toggles.Plant.Value then
+		if not (Toggles.Farmland and Toggles.Farmland.Value) then
+			local equip = TSG.EquipHotbarRemote
+			if equip and FarmlandRestoreTool and FarmlandRestoreTool ~= 6 then
+				local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+				pcall(function()
+					equip:InvokeServer("inventory", slot, FarmlandRestoreTool)
+				end)
+			end
+			FarmlandRestoreTool = nil
+		end
+		return
+	end
+
+	if not TSG.PlantRemote then
+		Library:Notify({ Title = "Plant", Description = "plant remote not found.", Time = 4 })
+		Toggles.Plant:SetValue(false)
+		return
+	end
+
+	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
+
+	if FarmlandRestoreTool == nil then
+		FarmlandRestoreTool = GetHeldToolId()
+	end
+
+	-- Farmland tiles already sent a plant for, so walking back over them does not
+	-- re-fire. Weak keys so tiles that get harvested away drop out on their own.
+	PlantSeen = PlantSeen or setmetatable({}, { __mode = "k" })
+
+	local lastPlace = 0
+	local lastCX, lastCZ
+
+	local function ensureShovel()
+		local equip = TSG.EquipHotbarRemote
+		if not equip or GetHeldToolId() == 6 then return end
+		pcall(function()
+			equip:InvokeServer("inventory", slot, 6)
+		end)
+	end
+
+	-- Plants the chosen crop into any farmland tile near the player that has not
+	-- been planted yet. Local on purpose so it stays off the register budget.
+	local function plantPass()
+		local root = getRootPart()
+		if not root then return end
+
+		local cropId = Options.PlantCrop and FoodIdMap[Options.PlantCrop.Value]
+		if not cropId then return end
+
+		local folder = workspace:FindFirstChild("farmland")
+		if not folder then return end
+
+		local range = 16
+		local targets = {}
+		for _, obj in ipairs(folder:GetChildren()) do
+			if not PlantSeen[obj] then
+				local part = getChopTargetPart(obj)
+				if part and getFlatDistance(root.Position, part.Position) <= range then
+					PlantSeen[obj] = true
+					table.insert(targets, obj)
+				end
+			end
+		end
+
+		if #targets == 0 then return end
+
+		ensureShovel()
+		for _, obj in ipairs(targets) do
+			pcall(function()
+				TSG.PlantRemote:FireServer(slot, cropId, obj)
+			end)
+		end
+	end
+
+	track("Plant", RunService.Heartbeat:Connect(function()
+		if not Toggles.Plant.Value or not isAlive() then return end
+
+		-- Same early-out as Farmland: only work on entering a new 4-stud cell.
+		local root = getRootPart()
+		if not root then return end
+		local size = 4
+		local cellX = math.floor(root.Position.X / size + 0.5) * size
+		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
+		if cellX == lastCX and cellZ == lastCZ then return end
+
+		local delay = (Options.FarmlandDelay and Options.FarmlandDelay.Value) or 0.1
+		if tick() - lastPlace < delay then return end
+
+		lastPlace = tick()
+		lastCX = cellX
+		lastCZ = cellZ
+		pcall(plantPass)
 	end))
 end)
 
@@ -16244,6 +16365,9 @@ Library:OnUnload(function()
 	end
 	if Toggles.Farmland and Toggles.Farmland.Value then
 		Toggles.Farmland:SetValue(false)
+	end
+	if Toggles.Plant and Toggles.Plant.Value then
+		Toggles.Plant:SetValue(false)
 	end
 	if Toggles.AiAura and Toggles.AiAura.Value then
 		Toggles.AiAura:SetValue(false)
