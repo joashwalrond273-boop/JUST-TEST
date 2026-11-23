@@ -11109,56 +11109,55 @@ Toggles.Farmland:OnChanged(function()
 
 	local slot = tonumber(Options.FarmlandSlot and Options.FarmlandSlot.Value) or 5
 
-	-- Places 2 tiles in a line ahead of the player. Local on purpose so it stays
-	-- off the main chunk's register budget.
+	-- Places tiles on a world grid: the cell directly under the player's feet plus
+	-- the cell beside it, so walking forward lays a line while every row is two
+	-- tiles side by side. Local on purpose so it stays off the register budget.
 	local function placePass()
 		local root = getRootPart()
 		if not root then return end
 
 		local size = (Options.FarmlandTileSize and Options.FarmlandTileSize.Value) or 4
-		local look = root.CFrame.LookVector
-		local forward = Vector3.new(look.X, 0, look.Z)
-		if forward.Magnitude < 1e-4 then
-			forward = Vector3.new(0, 0, -1)
-		else
-			forward = forward.Unit
-		end
 
-		-- Snap the origin to the world grid so every pass lines up straight.
-		local baseX = math.floor(root.Position.X / size + 0.5) * size
-		local baseZ = math.floor(root.Position.Z / size + 0.5) * size
+		-- The grid cell under the player's feet.
+		local cellX = math.floor(root.Position.X / size + 0.5) * size
+		local cellZ = math.floor(root.Position.Z / size + 0.5) * size
 		local y = root.Position.Y
 
-		-- Step along whichever world axis the player faces most, so the line stays
-		-- axis aligned instead of drifting diagonally between placements.
-		local stepX, stepZ = 0, 0
+		-- Fill sideways along whichever world axis the player is NOT facing, so the
+		-- rows stay parallel and the plot grows straight.
+		local look = root.CFrame.LookVector
+		local forward = Vector3.new(look.X, 0, look.Z)
+		local sideX, sideZ
 		if math.abs(forward.X) >= math.abs(forward.Z) then
-			stepX = forward.X >= 0 and size or -size
+			sideX, sideZ = 0, size
 		else
-			stepZ = forward.Z >= 0 and size or -size
+			sideX, sideZ = size, 0
 		end
 
-		-- Collect only the tiles that are actually free, so a running loop does not
-		-- spam one coordinate.
 		local folder = workspace:FindFirstChild("farmland")
-		local targets = {}
-		for i = 1, 2 do
-			local pos = Vector3.new(baseX + stepX * i, y, baseZ + stepZ * i)
-			local occupied = false
-			if folder then
-				for _, obj in ipairs(folder:GetChildren()) do
-					local part = getChopTargetPart(obj)
-					if part then
-						local d = (Vector3.new(part.Position.X, 0, part.Position.Z)
-							- Vector3.new(pos.X, 0, pos.Z)).Magnitude
-						if d < size * 0.5 then
-							occupied = true
-							break
-						end
+		local function isOccupied(pos)
+			if not folder then return false end
+			for _, obj in ipairs(folder:GetChildren()) do
+				local part = getChopTargetPart(obj)
+				if part then
+					local d = (Vector3.new(part.Position.X, 0, part.Position.Z)
+						- Vector3.new(pos.X, 0, pos.Z)).Magnitude
+					if d < size * 0.5 then
+						return true
 					end
 				end
 			end
-			if not occupied then
+			return false
+		end
+
+		-- Under the feet and the tile beside it, skipping any that already exist.
+		local targets = {}
+		local cells = {
+			Vector3.new(cellX, y, cellZ),
+			Vector3.new(cellX + sideX, y, cellZ + sideZ),
+		}
+		for _, pos in ipairs(cells) do
+			if not isOccupied(pos) then
 				table.insert(targets, pos)
 			end
 		end
