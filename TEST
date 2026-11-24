@@ -13810,11 +13810,12 @@ VisualFPS:AddCheckbox("NoGrass", {
 
 do
 	-- Effect templates removed outright when this is ticked. Every entry is
-	-- { rootTag, <child names...> }. "SPS" means StarterPlayerScripts, which the
-	-- engine clones into the player's PlayerScripts on join - the live copy is
-	-- the one that actually plays the effects - so both the template and the
-	-- live copy are purged. Destroying an instance cannot be undone, so unticking
-	-- only re-arms the checkbox: rejoin to get them back.
+	-- { rootTag, <child names...> }. "RS" means ReplicatedStorage, "WS" means
+	-- workspace, and "SPS" means StarterPlayerScripts, which the engine clones
+	-- into the player's PlayerScripts on join - the live copy is the one that
+	-- actually plays the effects - so both the template and the live copy are
+	-- purged. Destroying an instance cannot be undone, so unticking only re-arms
+	-- the checkbox: rejoin to get them back.
 	local REMOVE_PATHS = {
 		{ "RS", "Other", "SamuraiEffects" },
 		{ "RS", "Other", "Explosion" },
@@ -13830,12 +13831,18 @@ do
 		{ "SPS", "ArenaController", "Particles", "PurpleSkull" },
 		{ "SPS", "ArenaController", "CircleRing" },
 		{ "SPS", "ArenaController", "RadiusSmoke" },
+		-- Spawned explosion clones: effectModules.Explosion parents each clone to
+		-- workspace.misc. The template above stops new ones; this purges the live
+		-- clones the moment they appear.
+		{ "WS", "misc", "Explosion" },
 	}
 
 	local function getRoots(tag)
 		local roots = {}
 		if tag == "RS" then
 			roots[1] = ReplicatedStorage
+		elseif tag == "WS" then
+			roots[1] = workspace
 		else
 			local starterPlayer = game:GetService("StarterPlayer")
 			local template = starterPlayer and starterPlayer:FindFirstChild("StarterPlayerScripts")
