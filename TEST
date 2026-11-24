@@ -18,19 +18,43 @@ local LocalPlayer = Players.LocalPlayer
 
 local joinLowPingServer
 
--- Obsidian UI source (loaded from GitHub)
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua"))()
+-- Obsidian
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 
+-- Loads an Obsidian source file. Prefers the editable local copy in the
+-- executor's workspace ("Obsidian/...") so the UI can be customised without a
+-- network fetch. If the local file is missing it fetches from GitHub, caches it
+-- to disk (when writefile exists) for next time, and falls back gracefully on
+-- executors without readfile.
+local function loadObsidian(relPath)
+	local localPath = "Obsidian/" .. relPath
+	local ok, result = pcall(function()
+		return loadstring(readfile(localPath))()
+	end)
+	if ok and result ~= nil then
+		return result
+	end
+	local source = game:HttpGet(repo .. relPath)
+	pcall(function()
+		if makefolder then
+			pcall(makefolder, "Obsidian")
+			pcall(makefolder, "Obsidian/addons")
+		end
+		if writefile then
+			writefile(localPath, source)
+		end
+	end)
+	return loadstring(source)()
+end
+
+local Library = loadObsidian("Library.lua")
 getgenv().TSG_UNLOAD = function()
     pcall(function()
 		Library:Unload()
 	end)
 end
-
--- Obsidian addons (loaded from GitHub)
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local ThemeManager = loadObsidian("addons/ThemeManager.lua")
+local SaveManager = loadObsidian("addons/SaveManager.lua")
 
 -- Ensure Lucide Icons are properly loaded for tabs & groupboxes
 pcall(function()
