@@ -14615,6 +14615,12 @@ local function getOrCreateESP(player)
 			highlight = nil,
 			lastDist = -1,
 			lastHealth = -1,
+			-- Auto-heal detection state: health sampled once a second; a steady
+			-- +3/s gain is the giveaway for auto heal.
+			healLastTime = nil,
+			healLastHealth = nil,
+			healStreak = 0,
+			healFlagged = false,
 		}
 		espObjects[player] = entry
 	else
@@ -14766,6 +14772,31 @@ local function updateAllESP()
 						if entry.hpText.Text ~= hpStr then
 							entry.hpText.Text = hpStr
 						end
+
+						-- Auto-heal detection: sample health once a second. A steady
+						-- +3/s gain sustained over several seconds only happens with
+						-- auto heal, so flag it and paint the number red.
+						if not entry.healLastTime then
+							entry.healLastTime = now
+							entry.healLastHealth = curHealth
+							entry.healStreak = 0
+						elseif now - entry.healLastTime >= 1 then
+							local delta = curHealth - entry.healLastHealth
+							entry.healLastTime = now
+							entry.healLastHealth = curHealth
+							if math.abs(delta - 3) <= 0.5 then
+								entry.healStreak = entry.healStreak + 1
+							else
+								entry.healStreak = 0
+							end
+							entry.healFlagged = entry.healStreak >= 3
+						end
+
+						local targetColor = entry.healFlagged and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(0, 255, 120)
+						if entry.hpText.TextColor3 ~= targetColor then
+							entry.hpText.TextColor3 = targetColor
+						end
+
 						if not entry.hpText.Visible then
 							entry.hpText.Visible = true
 						end
@@ -14840,7 +14871,7 @@ end)
 -- checkbox is on, nothing at all when it is off.
 do
 	local SPEED_LIMIT = 22.4
-	local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
+	local NORMAL_COLOR = Color3.fromRGB(0, 255, 0)
 	local FLAG_COLOR = Color3.fromRGB(255, 60, 60)
 
 	local speedESPs = {}
@@ -14875,7 +14906,7 @@ do
 		label.Name = "SpeedLabel"
 		label.Size = UDim2.fromScale(1, 1)
 		label.BackgroundTransparency = 1
-		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextColor3 = Color3.fromRGB(0, 255, 0)
 		label.TextStrokeTransparency = 0.25
 		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		label.Font = Enum.Font.GothamBold
