@@ -14339,7 +14339,7 @@ VisualLeft:AddCheckbox("ShowHealthText", {
 })
 
 VisualLeft:AddCheckbox("SpeedESP", {
-	Text = "Speed ESP",
+	Text = "Show Speed",
 	Default = false,
 })
 
@@ -14353,7 +14353,7 @@ VisualLeft:AddSlider("ESPDistance", {
 })
 
 local updatePlayerESPVisibility = function()
-	-- Speed ESP shares the Max Distance slider, so it keeps the slider visible on
+	-- Show Speed shares the Max Distance slider, so it keeps the slider visible on
 	-- its own too.
 	local isPlayerESP = (Toggles.PlayerESP and Toggles.PlayerESP.Value) or (Toggles.SpeedESP and Toggles.SpeedESP.Value) or false
 	if Options.ESPDistance then
@@ -14831,12 +14831,18 @@ Toggles.PlayerESP:OnChanged(function()
 end)
 
 -- ==========================================
--- Speed ESP: a billboard over every player showing how fast they are actually
+-- Show Speed: a billboard over every player showing how fast they are actually
 -- moving in studs/s (XZ velocity, not Humanoid.WalkSpeed), so it also exposes
--- anyone moving faster than they should. Standalone from the main Player ESP -
--- it has its own loop and its own billboards - and event driven the same way:
--- one throttled pass while the checkbox is on, nothing at all when it is off.
+-- anyone moving faster than a normal player can. Anything past SPEED_LIMIT turns
+-- red and gets tagged, which is the giveaway that they are speeding themselves
+-- up. Standalone from the main Player ESP - it has its own loop and its own
+-- billboards - and event driven the same way: one throttled pass while the
+-- checkbox is on, nothing at all when it is off.
 do
+	local SPEED_LIMIT = 22.4
+	local NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
+	local FLAG_COLOR = Color3.fromRGB(255, 60, 60)
+
 	local speedESPs = {}
 	local SPEED_BB_NAME = "URIEL_SpeedESP_Billboard"
 
@@ -14859,7 +14865,7 @@ do
 	local function createSpeedEntry(player, root)
 		local billboard = Instance.new("BillboardGui")
 		billboard.Name = SPEED_BB_NAME
-		billboard.Size = UDim2.fromOffset(110, 16)
+		billboard.Size = UDim2.fromOffset(170, 16)
 		billboard.StudsOffset = Vector3.new(0, 4.4, 0)
 		billboard.AlwaysOnTop = true
 		billboard.Adornee = root
@@ -14883,6 +14889,7 @@ do
 			billboard = billboard,
 			label = label,
 			lastSpeed = -1,
+			lastFlagged = false,
 		}
 		speedESPs[player] = entry
 		return entry
@@ -14931,12 +14938,17 @@ do
 					if inRange then
 						local velocity = root.AssemblyLinearVelocity
 						local speed = math.floor(math.sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) + 0.5)
-						if entry.lastSpeed ~= speed then
+						local flagged = speed > SPEED_LIMIT
+						if entry.lastSpeed ~= speed or entry.lastFlagged ~= flagged then
 							entry.lastSpeed = speed
-							entry.label.Text = tostring(speed) .. " studs/s"
-							-- Hue ramps green -> red as the speed climbs, so an
-							-- outlier is obvious at a glance.
-							entry.label.TextColor3 = Color3.fromHSV(math.clamp(1 - speed / 80, 0, 1) * 0.33, 1, 1)
+							entry.lastFlagged = flagged
+							if flagged then
+								entry.label.Text = tostring(speed) .. " studs/s (FAST)"
+								entry.label.TextColor3 = FLAG_COLOR
+							else
+								entry.label.Text = tostring(speed) .. " studs/s"
+								entry.label.TextColor3 = NORMAL_COLOR
+							end
 						end
 					end
 				end
