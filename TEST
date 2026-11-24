@@ -12905,7 +12905,8 @@ local function oreESPLoop()
 				hl.FillColor = item.color
 				hl.OutlineColor = Color3.fromRGB(255, 255, 255)
 				hl.FillTransparency = 0.65
-				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				-- Depth-respecting in Low Graphics to skip the through-wall pass.
+				hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 				hl.Adornee = item.obj
 				hl.Enabled = true
 				hl.Parent = workspace
@@ -14343,6 +14344,13 @@ VisualLeft:AddCheckbox("SpeedESP", {
 	Default = false,
 })
 
+-- Master performance switch: every heavy render loop below drops its update rate
+-- and instance counts when this is on. All features keep working, just cheaper.
+VisualLeft:AddCheckbox("LowGraphics", {
+	Text = "Low Graphics Mode",
+	Default = false,
+})
+
 VisualLeft:AddSlider("ESPDistance", {
 	Text = "Max Distance",
 	Default = 500,
@@ -14400,6 +14408,12 @@ VisualEnv:AddDropdown("WeatherControl", {
 	Values = {"Default", "Ash", "Rain", "Heavy Rain", "Thunderstorm", "Snow", "Sandstorm"},
 	Default = "Default",
 })
+
+-- Master performance switch used by the heavy render loops. Global function on
+-- purpose: the main chunk is already at Luau's 200-local register limit.
+function TSG_LowGraphics()
+	return (Toggles and Toggles.LowGraphics and Toggles.LowGraphics.Value) == true
+end
 
 local espObjects = {}
 -- Cached list of the other players, so the per-frame ESP loop never rebuilds it.
@@ -14647,8 +14661,9 @@ local function updateAllESP()
 	local now = tick()
 	-- The engine positions the BillboardGui itself, so the Lua side does not need
 	-- to run every frame. ~20 Hz looks identical while cutting the per-frame Lua
-	-- work (and the property writes it can trigger) by two thirds.
-	if now - TSG_ESPUpdatePrev < 0.05 then return end
+	-- work (and the property writes it can trigger) by two thirds. Low Graphics
+	-- halves that again to ~10 Hz.
+	if now - TSG_ESPUpdatePrev < (TSG_LowGraphics() and 0.1 or 0.05) then return end
 	TSG_ESPUpdatePrev = now
 
 	local myRoot = getRootPart()
@@ -14681,7 +14696,8 @@ local function updateAllESP()
 				-- Outline ESP draws through a Highlight instance, which forces an
 				-- extra render pass per adorned character on mobile, so it is only
 				-- built while the option is on and the player is close enough.
-				local shouldHl = outlineEnabled and inRange and (dist <= 250)
+				-- Low Graphics tightens that range so fewer Highlights are live.
+				local shouldHl = outlineEnabled and inRange and (dist <= (TSG_LowGraphics() and 120 or 250))
 				if shouldHl then
 					if not entry.highlight then
 						local hl = Instance.new("Highlight")
@@ -14933,8 +14949,9 @@ do
 
 		local now = tick()
 		-- The engine positions the BillboardGui itself, so ~10 Hz reads the same
-		-- while keeping the Lua work (and property writes) minimal.
-		if now - lastSpeedUpdate < 0.1 then return end
+		-- while keeping the Lua work (and property writes) minimal. Low Graphics
+		-- drops it to ~5 Hz.
+		if now - lastSpeedUpdate < (TSG_LowGraphics() and 0.2 or 0.1) then return end
 		lastSpeedUpdate = now
 
 		local myRoot = getRootPart()
@@ -15496,7 +15513,8 @@ function TSG_BuildWeatherGrid(config)
 	WeatherOverrideFolder = folder
 
 	local cells = {}
-	local radius = 3
+	-- 7x7 cells normally, 5x5 in Low Graphics: fewer particle emitters to render.
+	local radius = TSG_LowGraphics() and 2 or 3
 	local size = Vector3.new(config.Cell, config.Height, config.Cell)
 	for offsetX = -radius, radius do
 		for offsetZ = -radius, radius do
@@ -15519,10 +15537,15 @@ function TSG_BuildWeatherGrid(config)
 		end
 	end
 
+	local lastCellPos = nil
 	WeatherOverrideConnection = RunService.RenderStepped:Connect(function()
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local base = camera.CFrame.Position
+		-- Only rewrite the cells when the camera actually moved. Standing still
+		-- (common on mobile) then costs nothing instead of ~49 CFrame writes a frame.
+		if lastCellPos and (base - lastCellPos).Magnitude < 0.25 then return end
+		lastCellPos = base
 		for _, cell in ipairs(cells) do
 			cell.Part.CFrame = CFrame.new(base.X + cell.X, base.Y + config.Offset, base.Z + cell.Z)
 		end
@@ -16312,7 +16335,9 @@ local function onInvisibleFlyToggle(state)
 			hl.FillColor = Options.InvisibleFlyFillColor.Value
 			hl.OutlineColor = Options.InvisibleFlyOutlineColor.Value
 			hl.FillTransparency = 0.3
-			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			-- AlwaysOnTop draws through walls but forces an extra render pass on
+			-- mobile; Low Graphics falls back to the depth-respecting mode.
+			hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 			hl.Adornee = invisibleFlyVars.playerClone
 			hl.Enabled = true
 			hl.Parent = workspace
