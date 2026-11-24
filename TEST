@@ -18,29 +18,8 @@ local LocalPlayer = Players.LocalPlayer
 
 local joinLowPingServer
 
--- Obsidian UI source (loaded from the local file so you can edit it: Obsidian/Library.lua)
-local Library
-do
-	local LIB_PATH = "Obsidian/Library.lua"
-	local LIB_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"
-
-	local source
-	if isfile and isfile(LIB_PATH) then
-		local ok, data = pcall(readfile, LIB_PATH)
-		if ok and typeof(data) == "string" and #data > 0 then
-			source = data
-		end
-	end
-
-	if not source then
-		source = game:HttpGet(LIB_URL)
-		if writefile then
-			pcall(writefile, LIB_PATH, source)
-		end
-	end
-
-	Library = loadstring(source)()
-end
+-- Obsidian UI source (loaded from GitHub)
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua"))()
 
 getgenv().TSG_UNLOAD = function()
     pcall(function()
@@ -48,7 +27,7 @@ getgenv().TSG_UNLOAD = function()
 	end)
 end
 
--- Obsidian addons (loaded from GitHub; the library above is loaded from Obsidian/Library.lua)
+-- Obsidian addons (loaded from GitHub)
 local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
