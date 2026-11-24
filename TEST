@@ -12905,7 +12905,7 @@ local function oreESPLoop()
 				hl.FillColor = item.color
 				hl.OutlineColor = Color3.fromRGB(255, 255, 255)
 				hl.FillTransparency = 0.65
-				-- Depth-respecting in Low Graphics to skip the through-wall pass.
+				-- Depth-respecting in Boost Performance to skip the through-wall pass.
 				hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 				hl.Adornee = item.obj
 				hl.Enabled = true
@@ -13939,7 +13939,7 @@ VisualFPS:AddCheckbox("FullBright", {
 		pcall(function()
 			local lighting = game:GetService("Lighting")
 			if state then
-				lighting.Brightness = 1.5
+				lighting.Brightness = (Options.FullBrightValue and Options.FullBrightValue.Value) or 1.5
 				lighting.GlobalShadows = false
 				lighting.Ambient = Color3.new(0.7, 0.7, 0.7)
 				lighting.OutdoorAmbient = Color3.new(0.8, 0.8, 0.8)
@@ -13952,6 +13952,26 @@ VisualFPS:AddCheckbox("FullBright", {
 		end)
 	end,
 })
+
+VisualFPS:AddSlider("FullBrightValue", {
+	Text = "Brightness",
+	Default = 1.5,
+	Min = 0,
+	Max = 3,
+	Rounding = 1,
+	Compact = true,
+})
+
+-- Live-apply the brightness slider while Full Bright is on.
+if Options.FullBrightValue then
+	Options.FullBrightValue:OnChanged(function()
+		if Toggles.FullBright and Toggles.FullBright.Value then
+			pcall(function()
+				game:GetService("Lighting").Brightness = Options.FullBrightValue.Value
+			end)
+		end
+	end)
+end
 
 pcall(function()
 	local lighting = game:GetService("Lighting")
@@ -14297,6 +14317,13 @@ TSG_AntiLagGroup:AddCheckbox("PingSpoofer", {
 	end,
 })
 
+-- Boost Performance: every heavy render loop drops its update rate and instance
+-- counts when this is on. All features keep working, just cheaper.
+TSG_AntiLagGroup:AddCheckbox("LowGraphics", {
+	Text = "Boost Performance",
+	Default = false,
+})
+
 VisualLeft:AddToggle("PlayerESP", {
 	Text = "Enabled",
 	Default = false,
@@ -14341,13 +14368,6 @@ VisualLeft:AddCheckbox("ShowHealthText", {
 
 VisualLeft:AddCheckbox("SpeedESP", {
 	Text = "Show Speed",
-	Default = false,
-})
-
--- Master performance switch: every heavy render loop below drops its update rate
--- and instance counts when this is on. All features keep working, just cheaper.
-VisualLeft:AddCheckbox("LowGraphics", {
-	Text = "Low Graphics Mode",
 	Default = false,
 })
 
@@ -14661,7 +14681,7 @@ local function updateAllESP()
 	local now = tick()
 	-- The engine positions the BillboardGui itself, so the Lua side does not need
 	-- to run every frame. ~20 Hz looks identical while cutting the per-frame Lua
-	-- work (and the property writes it can trigger) by two thirds. Low Graphics
+	-- work (and the property writes it can trigger) by two thirds. Boost Performance
 	-- halves that again to ~10 Hz.
 	if now - TSG_ESPUpdatePrev < (TSG_LowGraphics() and 0.1 or 0.05) then return end
 	TSG_ESPUpdatePrev = now
@@ -14696,7 +14716,7 @@ local function updateAllESP()
 				-- Outline ESP draws through a Highlight instance, which forces an
 				-- extra render pass per adorned character on mobile, so it is only
 				-- built while the option is on and the player is close enough.
-				-- Low Graphics tightens that range so fewer Highlights are live.
+				-- Boost Performance tightens that range so fewer Highlights are live.
 				local shouldHl = outlineEnabled and inRange and (dist <= (TSG_LowGraphics() and 120 or 250))
 				if shouldHl then
 					if not entry.highlight then
@@ -14949,7 +14969,7 @@ do
 
 		local now = tick()
 		-- The engine positions the BillboardGui itself, so ~10 Hz reads the same
-		-- while keeping the Lua work (and property writes) minimal. Low Graphics
+		-- while keeping the Lua work (and property writes) minimal. Boost Performance
 		-- drops it to ~5 Hz.
 		if now - lastSpeedUpdate < (TSG_LowGraphics() and 0.2 or 0.1) then return end
 		lastSpeedUpdate = now
@@ -15513,7 +15533,7 @@ function TSG_BuildWeatherGrid(config)
 	WeatherOverrideFolder = folder
 
 	local cells = {}
-	-- 7x7 cells normally, 5x5 in Low Graphics: fewer particle emitters to render.
+	-- 7x7 cells normally, 5x5 in Boost Performance: fewer particle emitters to render.
 	local radius = TSG_LowGraphics() and 2 or 3
 	local size = Vector3.new(config.Cell, config.Height, config.Cell)
 	for offsetX = -radius, radius do
@@ -16336,7 +16356,7 @@ local function onInvisibleFlyToggle(state)
 			hl.OutlineColor = Options.InvisibleFlyOutlineColor.Value
 			hl.FillTransparency = 0.3
 			-- AlwaysOnTop draws through walls but forces an extra render pass on
-			-- mobile; Low Graphics falls back to the depth-respecting mode.
+			-- mobile; Boost Performance falls back to the depth-respecting mode.
 			hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 			hl.Adornee = invisibleFlyVars.playerClone
 			hl.Enabled = true
