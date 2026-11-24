@@ -14338,6 +14338,11 @@ VisualLeft:AddCheckbox("ShowHealthText", {
 	Default = false,
 })
 
+VisualLeft:AddCheckbox("SpeedESP", {
+	Text = "Speed ESP",
+	Default = false,
+})
+
 VisualLeft:AddSlider("ESPDistance", {
 	Text = "Max Distance",
 	Default = 500,
@@ -14348,7 +14353,9 @@ VisualLeft:AddSlider("ESPDistance", {
 })
 
 local updatePlayerESPVisibility = function()
-	local isPlayerESP = (Toggles.PlayerESP and Toggles.PlayerESP.Value) or false
+	-- Speed ESP shares the Max Distance slider, so it keeps the slider visible on
+	-- its own too.
+	local isPlayerESP = (Toggles.PlayerESP and Toggles.PlayerESP.Value) or (Toggles.SpeedESP and Toggles.SpeedESP.Value) or false
 	if Options.ESPDistance then
 		Options.ESPDistance.Visible = isPlayerESP
 		if Options.ESPDistance.Holder then
@@ -14822,6 +14829,142 @@ Toggles.PlayerESP:OnChanged(function()
 
 	updateAllESP()
 end)
+
+-- ==========================================
+-- Speed ESP: a billboard over every player showing how fast they are actually
+-- moving in studs/s (XZ velocity, not Humanoid.WalkSpeed), so it also exposes
+-- anyone moving faster than they should. Standalone from the main Player ESP -
+-- it has its own loop and its own billboards - and event driven the same way:
+-- one throttled pass while the checkbox is on, nothing at all when it is off.
+do
+	local speedESPs = {}
+	local SPEED_BB_NAME = "URIEL_SpeedESP_Billboard"
+
+	local function destroySpeedEntry(player)
+		local entry = speedESPs[player]
+		if entry then
+			if entry.billboard then
+				pcall(function() entry.billboard:Destroy() end)
+			end
+			speedESPs[player] = nil
+		end
+	end
+
+	local function clearSpeedESP()
+		for player in pairs(speedESPs) do
+			destroySpeedEntry(player)
+		end
+	end
+
+	local function createSpeedEntry(player, root)
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = SPEED_BB_NAME
+		billboard.Size = UDim2.fromOffset(110, 16)
+		billboard.StudsOffset = Vector3.new(0, 4.4, 0)
+		billboard.AlwaysOnTop = true
+		billboard.Adornee = root
+		billboard.Parent = getESPFolder()
+
+		local label = Instance.new("TextLabel")
+		label.Name = "SpeedLabel"
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextStrokeTransparency = 0.25
+		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		label.Font = Enum.Font.GothamBold
+		label.TextSize = 13
+		label.Text = "0 studs/s"
+		label.Parent = billboard
+
+		local entry = {
+			player = player,
+			root = root,
+			billboard = billboard,
+			label = label,
+			lastSpeed = -1,
+		}
+		speedESPs[player] = entry
+		return entry
+	end
+
+	local lastSpeedUpdate = 0
+
+	local function updateSpeedESP()
+		if not (Toggles.SpeedESP and Toggles.SpeedESP.Value) then return end
+
+		local now = tick()
+		-- The engine positions the BillboardGui itself, so ~10 Hz reads the same
+		-- while keeping the Lua work (and property writes) minimal.
+		if now - lastSpeedUpdate < 0.1 then return end
+		lastSpeedUpdate = now
+
+		local myRoot = getRootPart()
+		local myPos = myRoot and myRoot.Position
+		local maxDist = (Options and Options.ESPDistance and Options.ESPDistance.Value) or 500
+
+		for _, player in ipairs(TSG_PlayerList) do
+			if player ~= LocalPlayer then
+				local char = player.Character
+				local root = char and char:FindFirstChild("HumanoidRootPart")
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
+				local entry = speedESPs[player]
+
+				if not root or not hum or hum.Health <= 0 or not char.Parent then
+					if entry and entry.billboard.Enabled then
+						entry.billboard.Enabled = false
+					end
+				else
+					-- Also rebuild if the billboard was destroyed behind our back -
+					-- turning the main Player ESP off clears the shared folder.
+					if not entry or entry.root ~= root or not entry.billboard.Parent then
+						destroySpeedEntry(player)
+						entry = createSpeedEntry(player, root)
+					end
+
+					local dist = myPos and (root.Position - myPos).Magnitude or 0
+					local inRange = dist <= maxDist
+					if entry.billboard.Enabled ~= inRange then
+						entry.billboard.Enabled = inRange
+					end
+
+					if inRange then
+						local velocity = root.AssemblyLinearVelocity
+						local speed = math.floor(math.sqrt(velocity.X * velocity.X + velocity.Z * velocity.Z) + 0.5)
+						if entry.lastSpeed ~= speed then
+							entry.lastSpeed = speed
+							entry.label.Text = tostring(speed) .. " studs/s"
+							-- Hue ramps green -> red as the speed climbs, so an
+							-- outlier is obvious at a glance.
+							entry.label.TextColor3 = Color3.fromHSV(math.clamp(1 - speed / 80, 0, 1) * 0.33, 1, 1)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	Toggles.SpeedESP:OnChanged(function()
+		disconnect("SpeedESP_Loop")
+		disconnect("SpeedESP_Removing")
+
+		if updatePlayerESPVisibility then
+			updatePlayerESPVisibility()
+		end
+
+		if not Toggles.SpeedESP.Value then
+			clearSpeedESP()
+			return
+		end
+
+		track("SpeedESP_Loop", RunService.RenderStepped:Connect(updateSpeedESP))
+		track("SpeedESP_Removing", Players.PlayerRemoving:Connect(function(player)
+			destroySpeedEntry(player)
+		end))
+
+		updateSpeedESP()
+	end)
+end
 
 -- ==========================================
 -- Boss ESP (highlight + health bar on the live boss bodies)
