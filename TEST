@@ -6759,7 +6759,10 @@ SilentAimHK.Config:AddSlider("SAHKResponsiveness", {
 SilentAimHK.Config:AddDropdown("SAHKAimMethods", {
 	Text = "Aim Methods",
 	Values = { "Raycast", "FireServer", "InvokeServer", "Mouse.Hit" },
-	Default = { "Raycast" },
+	-- Raycast alone only spoofs the game's own ray, which is what draws the hit.
+	-- The damage itself is applied by the shot remote the server validates, so the
+	-- remote methods must be on too or ranged hits land on screen but deal none.
+	Default = { "Raycast", "FireServer", "InvokeServer" },
 	Multi = true,
 })
 
