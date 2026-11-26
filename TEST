@@ -1872,11 +1872,6 @@ CosmeticsGroup:AddDropdown("RecolorEquippedTarget", {
 	Default = "Head",
 })
 
-CosmeticsGroup:AddColorPicker("RecolorEquippedColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Equipped Gear Color",
-})
-
 CosmeticsGroup:AddDivider()
 
 -- Hit Sounds (built here, but the controls live in the MISC group so the
