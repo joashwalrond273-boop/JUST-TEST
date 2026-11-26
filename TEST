@@ -1857,6 +1857,16 @@ CosmeticsGroup:AddDropdown("BackWearSelect", {
 
 CosmeticsGroup:AddDivider()
 
+-- Recolour the character's own body (head, torso, arms, legs) independently
+-- of the gear and cosmetics below.
+CosmeticsGroup:AddCheckbox("BodyColorChange", {
+	Text = "Change Body Color",
+	Default = false,
+}):AddColorPicker("BodyColorPicker", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Title = "Body Color",
+})
+
 -- Recolour the gear the player already has equipped (Head, Shirt, Pants, Bag)
 -- rather than the cosmetic items from the menu above. The checkbox applies the
 -- chosen colour to the part selected in the dropdown; turning it off restores
@@ -1876,14 +1886,35 @@ CosmeticsGroup:AddDropdown("RecolorEquippedTarget", {
 	Multi = true,
 })
 
--- Recolour the character's own body (head, torso, arms, legs) independently
--- of the gear above.
-CosmeticsGroup:AddCheckbox("BodyColorChange", {
-	Text = "Change Body Color",
-	Default = false,
-}):AddColorPicker("BodyColorPicker", {
+-- Cosmetic color changer: tints the in-game cosmetic items the script equips
+-- for you (the Head / Body / Pants / Back Wear picked above), not your own
+-- gear. Tick the categories to tint in the dropdown, then set each colour
+-- below it. Unticking a category puts the cosmetic's own colours back.
+CosmeticsGroup:AddDropdown("WearColorSelect", {
+	Text = "Recolor Cosmetics",
+	Values = { "Head Wear", "Body Wear", "Pants Wear", "Back Wear" },
+	Default = {},
+	Multi = true,
+})
+
+CosmeticsGroup:AddLabel("Head Wear Color"):AddColorPicker("CosmeticSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Body Color",
+	Title = "Head Wear Color",
+})
+
+CosmeticsGroup:AddLabel("Body Wear Color"):AddColorPicker("BodyWearSelectColor", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Title = "Body Wear Color",
+})
+
+CosmeticsGroup:AddLabel("Pants Wear Color"):AddColorPicker("PantsWearSelectColor", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Title = "Pants Wear Color",
+})
+
+CosmeticsGroup:AddLabel("Back Wear Color"):AddColorPicker("BackWearSelectColor", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Title = "Back Wear Color",
 })
 
 CosmeticsGroup:AddDivider()
@@ -1936,7 +1967,7 @@ MiscGroup:AddDropdown("HitSoundSelect", {
 
 MiscGroup:AddDropdown("HitEffectSelect", {
 	Text = "Hit Effect",
-	Values = { "None", "Lightning", "Smoke", "Fire", "Explosion", "Ice", "Poison", "Shockwave", "Blood", "Sakura", "Void", "Holy", "Shadow", "Water", "Sand", "Leaf", "Fireworks", "Meteor" },
+	Values = { "None", "Lightning", "Smoke", "Fire", "Explosion", "Ice", "Poison", "Shockwave", "Blood", "Sakura", "Void", "Holy", "Shadow", "Water", "Sand", "Leaf", "Fireworks", "Meteor", "Rainbow", "Black Hole", "Tornado", "Snow", "Hearts", "Slash", "Nuke", "Soul" },
 	Default = "None",
 })
 
@@ -2730,6 +2761,323 @@ Xeno_PlayHitEffect = function(hitArgs)
 				Speed = NumberRange.new(6, 12),
 				SpreadAngle = Vector2.new(180, 180),
 			})
+		elseif selected == "Rainbow" then
+			emitWindow = 0.3
+			totalLife = 2.2
+
+			local rainbowLight = Instance.new("PointLight")
+			rainbowLight.Color = Color3.fromRGB(255, 180, 255)
+			rainbowLight.Range = 26
+			rainbowLight.Brightness = 3.5
+			rainbowLight.Parent = anchor
+
+			-- Multicoloured burst that arcs out and falls like glitter.
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
+					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 225, 80)),
+					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 255, 130)),
+					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(80, 190, 255)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(205, 100, 255)),
+				}),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 2),
+					NumberSequenceKeypoint.new(1, 0.4),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.05),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(0.7, 1.2),
+				Rate = 220,
+				Speed = NumberRange.new(14, 30),
+				SpreadAngle = Vector2.new(180, 180),
+				Acceleration = Vector3.new(0, -14, 0),
+				LightEmission = 1,
+			})
+		elseif selected == "Black Hole" then
+			emitWindow = 0.9
+			totalLife = 2.4
+
+			local core = Instance.new("Part")
+			core.Shape = Enum.PartType.Ball
+			core.Material = Enum.Material.Neon
+			core.Color = Color3.fromRGB(70, 25, 140)
+			core.Size = Vector3.new(2.4, 2.4, 2.4)
+			core.Anchored = true
+			core.CanCollide = false
+			core.CanQuery = false
+			core.CastShadow = false
+			core.CFrame = CFrame.new(position)
+			core.Parent = fxFolder
+			table.insert(extras, core)
+
+			local swirl = Instance.new("PointLight")
+			swirl.Color = Color3.fromRGB(150, 90, 255)
+			swirl.Range = 34
+			swirl.Brightness = 4
+			swirl.Parent = anchor
+
+			-- Matter spiralling inwards: negative speed drags particles onto the core.
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(210, 165, 255), Color3.fromRGB(60, 15, 120)),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.2),
+					NumberSequenceKeypoint.new(1, 4),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.1),
+					NumberSequenceKeypoint.new(1, 0.25),
+				}),
+				Lifetime = NumberRange.new(0.8, 1.2),
+				Rate = 170,
+				Speed = NumberRange.new(-42, -16),
+				SpreadAngle = Vector2.new(180, 180),
+				RotSpeed = NumberRange.new(-300, 300),
+				LightEmission = 1,
+			})
+		elseif selected == "Tornado" then
+			emitWindow = 0.9
+			totalLife = 2.8
+
+			-- Translucent funnel the debris spins inside of.
+			local funnel = Instance.new("Part")
+			funnel.Material = Enum.Material.ForceField
+			funnel.Color = Color3.fromRGB(200, 215, 235)
+			funnel.Size = Vector3.new(6, 16, 6)
+			funnel.Transparency = 0.85
+			funnel.Anchored = true
+			funnel.CanCollide = false
+			funnel.CanQuery = false
+			funnel.CastShadow = false
+			funnel.CFrame = CFrame.new(position + Vector3.new(0, 8, 0))
+			funnel.Parent = fxFolder
+			table.insert(extras, funnel)
+
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/smoke_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(150, 160, 175), Color3.fromRGB(235, 240, 250)),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1.5),
+					NumberSequenceKeypoint.new(1, 5),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.4),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(0.7, 1.1),
+				Rate = 140,
+				Speed = NumberRange.new(16, 30),
+				SpreadAngle = Vector2.new(8, 8),
+				RotSpeed = NumberRange.new(-500, 500),
+				Acceleration = Vector3.new(0, 40, 0),
+			})
+		elseif selected == "Snow" then
+			emitWindow = 0.4
+			totalLife = 2.4
+
+			local cold = Instance.new("PointLight")
+			cold.Color = Color3.fromRGB(190, 225, 255)
+			cold.Range = 24
+			cold.Brightness = 3
+			cold.Parent = anchor
+
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(190, 225, 255)),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.6),
+					NumberSequenceKeypoint.new(1, 1.4),
+				}),
+				Transparency = NumberSequence.new(0.1),
+				Lifetime = NumberRange.new(0.9, 1.5),
+				Rate = 180,
+				Speed = NumberRange.new(6, 16),
+				SpreadAngle = Vector2.new(180, 180),
+				Rotation = NumberRange.new(0, 360),
+				RotSpeed = NumberRange.new(-180, 180),
+				Acceleration = Vector3.new(0, -6, 0),
+				LightEmission = 0.6,
+			})
+		elseif selected == "Hearts" then
+			emitWindow = 0.3
+			totalLife = 2.2
+
+			local love = Instance.new("PointLight")
+			love.Color = Color3.fromRGB(255, 110, 170)
+			love.Range = 22
+			love.Brightness = 3
+			love.Parent = anchor
+
+			-- Floating hearts that drift upward.
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 150)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 195, 225)),
+				}),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1.4),
+					NumberSequenceKeypoint.new(1, 0.5),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.05),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(0.9, 1.4),
+				Rate = 110,
+				Speed = NumberRange.new(8, 18),
+				SpreadAngle = Vector2.new(60, 60),
+				Rotation = NumberRange.new(0, 360),
+				RotSpeed = NumberRange.new(-120, 120),
+				Acceleration = Vector3.new(0, 12, 0),
+				LightEmission = 0.8,
+			})
+		elseif selected == "Slash" then
+			emitWindow = 0.12
+			totalLife = 0.9
+
+			local flash = Instance.new("PointLight")
+			flash.Color = Color3.fromRGB(255, 255, 255)
+			flash.Range = 22
+			flash.Brightness = 5
+			flash.Parent = anchor
+
+			-- Two crossed neon blades through the impact point.
+			for i = 1, 2 do
+				local blade = Instance.new("Part")
+				blade.Anchored = true
+				blade.CanCollide = false
+				blade.CanQuery = false
+				blade.CastShadow = false
+				blade.Material = Enum.Material.Neon
+				blade.Color = Color3.fromRGB(255, 255, 255)
+				blade.Size = Vector3.new(0.18, 0.18, 10)
+				blade.CFrame = CFrame.new(position) * CFrame.Angles(math.rad(25), math.rad(45 * i), 0)
+				blade.Parent = fxFolder
+				table.insert(extras, blade)
+			end
+
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(180, 220, 255)),
+				Size = NumberSequence.new(1.2),
+				Transparency = NumberSequence.new(0.1),
+				Lifetime = NumberRange.new(0.2, 0.4),
+				Rate = 120,
+				Speed = NumberRange.new(14, 28),
+				SpreadAngle = Vector2.new(180, 180),
+				LightEmission = 1,
+			})
+		elseif selected == "Nuke" then
+			emitWindow = 0.35
+			totalLife = 2.6
+
+			local blast = Instance.new("PointLight")
+			blast.Color = Color3.fromRGB(255, 210, 140)
+			blast.Range = 46
+			blast.Brightness = 6
+			blast.Parent = anchor
+			task.delay(0.5, function()
+				if blast.Parent then blast:Destroy() end
+			end)
+
+			-- Expanding fireball plus the shockwave dust it kicks up.
+			local ball = Instance.new("Part")
+			ball.Shape = Enum.PartType.Ball
+			ball.Material = Enum.Material.Neon
+			ball.Color = Color3.fromRGB(255, 180, 90)
+			ball.Size = Vector3.new(1, 1, 1)
+			ball.Anchored = true
+			ball.CanCollide = false
+			ball.CanQuery = false
+			ball.CastShadow = false
+			ball.CFrame = CFrame.new(position)
+			ball.Parent = fxFolder
+			table.insert(extras, ball)
+			task.spawn(function()
+				for i = 1, 12 do
+					if not ball.Parent then return end
+					local s = 1 + i * 1.9
+					ball.Size = Vector3.new(s, s, s)
+					ball.Transparency = 0.15 + i * 0.06
+					task.wait(0.04)
+				end
+			end)
+
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/fire_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(255, 240, 170), Color3.fromRGB(170, 45, 0)),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 3),
+					NumberSequenceKeypoint.new(1, 9),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.15),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(0.5, 0.9),
+				Rate = 260,
+				Speed = NumberRange.new(10, 34),
+				SpreadAngle = Vector2.new(180, 180),
+				LightEmission = 1,
+			})
+
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/smoke_main.dds",
+				Color = ColorSequence.new(Color3.fromRGB(80, 70, 60), Color3.fromRGB(160, 145, 125)),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 5),
+					NumberSequenceKeypoint.new(1, 16),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.55),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(1, 1.6),
+				Rate = 90,
+				Speed = NumberRange.new(8, 18),
+				SpreadAngle = Vector2.new(180, 180),
+			})
+		elseif selected == "Soul" then
+			emitWindow = 0.5
+			totalLife = 2.6
+
+			local eerie = Instance.new("PointLight")
+			eerie.Color = Color3.fromRGB(120, 255, 210)
+			eerie.Range = 28
+			eerie.Brightness = 3.5
+			eerie.Parent = anchor
+			task.delay(0.6, function()
+				if eerie.Parent then eerie:Destroy() end
+			end)
+
+			-- Green wisps that rise slowly and drift, like a soul leaving.
+			addEmitter(anchor, {
+				Texture = "rbxasset://textures/particles/sparkles_main.dds",
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(190, 255, 235)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(40, 150, 120)),
+				}),
+				Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.5),
+					NumberSequenceKeypoint.new(1, 3),
+				}),
+				Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.15),
+					NumberSequenceKeypoint.new(1, 1),
+				}),
+				Lifetime = NumberRange.new(1.1, 1.7),
+				Rate = 90,
+				Speed = NumberRange.new(2, 6),
+				SpreadAngle = Vector2.new(40, 40),
+				Rotation = NumberRange.new(0, 360),
+				RotSpeed = NumberRange.new(-60, 60),
+				Acceleration = Vector3.new(0, 9, 0),
+				LightEmission = 1,
+			})
 		end
 
 		-- Stop emitting after the window, then let the particles fade out.
@@ -2848,6 +3196,9 @@ do
 	local function setBloomActive(active)
 		local lighting = game:GetService("Lighting")
 		local bloom = lighting:FindFirstChild("XenoGlowBloom")
+		-- Boost Performance skips the bloom: it is a full-screen post-process
+		-- pass, which is one of the most expensive things we add on mobile.
+		if active and TSG_LowGraphics and TSG_LowGraphics() then active = false end
 		if active then
 			if not bloom or not bloom:IsA("BloomEffect") then
 				if bloom then bloom:Destroy() end
@@ -14802,6 +15153,63 @@ VisualEnv:AddDropdown("WeatherControl", {
 -- purpose: the main chunk is already at Luau's 200-local register limit.
 function TSG_LowGraphics()
 	return (Toggles and Toggles.LowGraphics and Toggles.LowGraphics.Value) == true
+end
+
+-- Extra savings on top of the per-loop throttling: switch off the Lighting
+-- post-process passes (bloom, blur, depth of field, sun rays, colour grading)
+-- and hide the world's shadows, which is where most of a mobile GPU's frame
+-- budget goes. Their previous states are remembered so flipping Boost
+-- Performance back off restores the scene exactly.
+do
+	local lowGraphicsEffects = setmetatable({}, { __mode = "k" })
+	local savedRender = nil
+
+	local function applyLowGraphicsSettings()
+		local lighting = game:GetService("Lighting")
+		if TSG_LowGraphics() then
+			if not savedRender then
+				savedRender = {
+					GlobalShadows = lighting.GlobalShadows,
+					EnvironmentDiffuseScale = lighting.EnvironmentDiffuseScale,
+					EnvironmentSpecularScale = lighting.EnvironmentSpecularScale,
+				}
+			end
+			for _, v in ipairs(lighting:GetChildren()) do
+				if v:IsA("PostEffect") and lowGraphicsEffects[v] == nil then
+					lowGraphicsEffects[v] = v.Enabled
+					v.Enabled = false
+				end
+			end
+			lighting.GlobalShadows = false
+			lighting.EnvironmentDiffuseScale = 0
+			lighting.EnvironmentSpecularScale = 0
+		else
+			for effect, wasEnabled in pairs(lowGraphicsEffects) do
+				if effect and effect.Parent then
+					effect.Enabled = wasEnabled
+				end
+			end
+			lowGraphicsEffects = setmetatable({}, { __mode = "k" })
+			if savedRender then
+				lighting.GlobalShadows = savedRender.GlobalShadows
+				lighting.EnvironmentDiffuseScale = savedRender.EnvironmentDiffuseScale
+				lighting.EnvironmentSpecularScale = savedRender.EnvironmentSpecularScale
+				savedRender = nil
+			end
+		end
+	end
+
+	-- Keep working if a post effect is added while Boost is on.
+	track("LowGraphics_LightingAdded", game:GetService("Lighting").ChildAdded:Connect(function(v)
+		if TSG_LowGraphics() and v:IsA("PostEffect") and lowGraphicsEffects[v] == nil then
+			lowGraphicsEffects[v] = v.Enabled
+			v.Enabled = false
+		end
+	end))
+
+	if Toggles.LowGraphics then
+		Toggles.LowGraphics:OnChanged(applyLowGraphicsSettings)
+	end
 end
 
 local espObjects = {}
