@@ -18629,9 +18629,11 @@ function TSG_ApplyUIBackgroundTransparency(alpha)
 	-- The window backdrop itself.
 	apply(mainFrame)
 
-	-- Every panel inside the window paints with the library's "BackgroundColor" scheme.
+	-- Everything that paints with the library's "BackgroundColor" scheme: the
+	-- groupbox panels inside the window as well as the popup menus (dropdown
+	-- lists, right-click context menus, tooltips) which live in the Overlay.
 	for instance, properties in Library.Registry do
-		if properties.BackgroundColor3 == "BackgroundColor" and instance:IsDescendantOf(mainFrame) then
+		if properties.BackgroundColor3 == "BackgroundColor" then
 			apply(instance)
 		end
 	end
@@ -18692,7 +18694,7 @@ MenuGroup:AddSlider("UICornerSlider", {
 
 MenuGroup:AddSlider("UIBackgroundTransparency", {
 	Text = "UI Transparency",
-	Default = 0,
+	Default = 35,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18733,6 +18735,11 @@ SaveManager:SetFolder("TSG/TheSurvivalGame")
 SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
+
+-- Obsidian only runs a slider's Callback on changes, so the 35% default is
+-- applied here once every panel and menu exists (and after a saved config,
+-- if any, has already overridden the slider value).
+TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
 
 Library:OnUnload(function()
 	if Toggles.Reach and Toggles.Reach.Value then
