@@ -1857,6 +1857,28 @@ CosmeticsGroup:AddDropdown("BackWearSelect", {
 
 CosmeticsGroup:AddDivider()
 
+-- Recolour the gear the player already has equipped (Head, Shirt, Pants, Bag)
+-- rather than the cosmetic items from the menu above. The toggle applies the
+-- chosen colour to the part selected in the dropdown; turning it off restores
+-- the original colours.
+CosmeticsGroup:AddToggle("RecolorEquipped", {
+	Text = "Recolor Equipped Gear",
+	Default = false,
+})
+
+CosmeticsGroup:AddDropdown("RecolorEquippedTarget", {
+	Text = "Target",
+	Values = { "Head", "Shirt", "Pants", "Bag" },
+	Default = "Head",
+})
+
+CosmeticsGroup:AddColorPicker("RecolorEquippedColor", {
+	Default = Color3.fromRGB(255, 255, 255),
+	Title = "Equipped Gear Color",
+})
+
+CosmeticsGroup:AddDivider()
+
 -- Hit Sounds (built here, but the controls live in the MISC group so the
 -- Cosmetics menu stays purely visual).
 local soundsRoot = ReplicatedStorage:FindFirstChild("modules")
@@ -3778,6 +3800,222 @@ do
 			return character:FindFirstChild("HumanoidRootPart"), CFrame.new()
 		end,
 	})
+end
+
+-- Recolours the player's currently equipped gear (Head / Shirt / Pants / Bag).
+-- Works on whatever the character is actually wearing in-game, not on the
+-- script's own cosmetics. Original colours are restored when the toggle is
+-- turned off, and the colour is re-applied after respawning.
+do
+	-- Standard Roblox body parts / instances we never want to treat as an
+	-- equipped item model.
+	local STANDARD_NAMES = {
+		Head = true, UpperTorso = true, LowerTorso = true, Torso = true,
+		LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
+		RightUpperArm = true, RightLowerArm = true, RightHand = true,
+		["Left Arm"] = true, ["Right Arm"] = true,
+		LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
+		RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+		["Left Leg"] = true, ["Right Leg"] = true,
+		HumanoidRootPart = true, Humanoid = true,
+	}
+
+	-- Attributes the script stamps onto its own cosmetics so we can leave
+	-- them alone.
+	local SCRIPT_ATTRIBUTES = {
+		"XenoCosmetic", "XenoBodyWear", "XenoPantsWear",
+		"XenoBackWear", "XenoGlow", "XenoHairTransparency",
+	}
+
+	local function isScriptOwned(obj)
+		for _, attr in ipairs(SCRIPT_ATTRIBUTES) do
+			if obj:GetAttribute(attr) ~= nil then return true end
+		end
+		return false
+	end
+
+	local originalColors = {} -- [part] = original Color3
+
+	local function storeOriginal(part)
+		if originalColors[part] == nil then
+			originalColors[part] = part.Color
+		end
+	end
+
+	local function clearDeadOriginals()
+		for part in pairs(originalColors) do
+			if not part.Parent then
+				originalColors[part] = nil
+			end
+		end
+	end
+
+	local function collectParts(root)
+		local parts = {}
+		if not root then return parts end
+		if root:IsA("BasePart") then
+			table.insert(parts, root)
+		end
+		for _, desc in ipairs(root:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				table.insert(parts, desc)
+			end
+		end
+		return parts
+	end
+
+	-- Find a non-standard, non-script-owned model/accessory in the character
+	-- whose name contains one of the given keywords (plain, case-insensitive).
+	local function findEquippedModel(keywords)
+		local character = getCharacter()
+		if not character then return nil end
+		for _, obj in ipairs(character:GetChildren()) do
+			if not STANDARD_NAMES[obj.Name]
+				and not obj:IsA("Shirt")
+				and not obj:IsA("Pants")
+				and not obj:IsA("Humanoid")
+				and not obj:IsA("Backpack")
+				and not isScriptOwned(obj) then
+				local name = obj.Name:lower()
+				for _, kw in ipairs(keywords) do
+					if name:find(kw:lower(), 1, true) then
+						return obj
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local function partsFromNameList(names)
+		local character = getCharacter()
+		if not character then return {} end
+		local out = {}
+		for _, name in ipairs(names) do
+			local p = character:FindFirstChild(name)
+			if p and p:IsA("BasePart") and not isScriptOwned(p) then
+				table.insert(out, p)
+			end
+		end
+		return out
+	end
+
+	local function getTargetParts(target)
+		local character = getCharacter()
+		if not character then return {} end
+		local parts = {}
+
+		if target == "Head" then
+			for _, p in ipairs(collectParts(character:FindFirstChild("Head"))) do
+				if not isScriptOwned(p) then table.insert(parts, p) end
+			end
+
+		elseif target == "Shirt" then
+			local model = findEquippedModel({
+				"shirt", "armor", "armour", "chest", "torso",
+				"top", "jacket", "vest", "plate",
+			})
+			if model then
+				for _, p in ipairs(collectParts(model)) do
+					if not isScriptOwned(p) then table.insert(parts, p) end
+				end
+			else
+				-- No shirt model found: tint the torso and arms, the area a
+				-- shirt normally covers.
+				parts = partsFromNameList({
+					"UpperTorso", "LowerTorso", "Torso",
+					"LeftUpperArm", "LeftLowerArm", "LeftHand",
+					"RightUpperArm", "RightLowerArm", "RightHand",
+					"Left Arm", "Right Arm",
+				})
+			end
+
+		elseif target == "Pants" then
+			local model = findEquippedModel({
+				"pant", "leg", "bottom", "trouser", "short",
+			})
+			if model then
+				for _, p in ipairs(collectParts(model)) do
+					if not isScriptOwned(p) then table.insert(parts, p) end
+				end
+			else
+				parts = partsFromNameList({
+					"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+					"RightUpperLeg", "RightLowerLeg", "RightFoot",
+					"Left Leg", "Right Leg",
+				})
+			end
+
+		elseif target == "Bag" then
+			local model = findEquippedModel({
+				"bag", "back", "pack", "cape", "wing", "sack", "satchel",
+			})
+			if not model then
+				for _, obj in ipairs(character:GetChildren()) do
+					if obj:IsA("Accessory") and not isScriptOwned(obj) then
+						model = obj
+						break
+					end
+				end
+			end
+			if model then
+				for _, p in ipairs(collectParts(model)) do
+					if not isScriptOwned(p) then table.insert(parts, p) end
+				end
+			end
+		end
+
+		return parts
+	end
+
+	local function applyRecolor()
+		local target = (Options.RecolorEquippedTarget and Options.RecolorEquippedTarget.Value) or "Head"
+		local color = (Options.RecolorEquippedColor and Options.RecolorEquippedColor.Value) or Color3.fromRGB(255, 255, 255)
+		clearDeadOriginals()
+		for _, part in ipairs(getTargetParts(target)) do
+			storeOriginal(part)
+			part.Color = color
+		end
+	end
+
+	local function restoreRecolor()
+		for part, color in pairs(originalColors) do
+			if part.Parent then
+				part.Color = color
+			end
+		end
+		originalColors = {}
+	end
+
+	local function isOn()
+		return Toggles.RecolorEquipped and Toggles.RecolorEquipped.Value
+	end
+
+	Toggles.RecolorEquipped:OnChanged(function()
+		if isOn() then
+			applyRecolor()
+		else
+			restoreRecolor()
+		end
+	end)
+
+	if Options.RecolorEquippedColor then
+		Options.RecolorEquippedColor:OnChanged(function()
+			if isOn() then applyRecolor() end
+		end)
+	end
+
+	if Options.RecolorEquippedTarget then
+		Options.RecolorEquippedTarget:OnChanged(function()
+			if isOn() then applyRecolor() end
+		end)
+	end
+
+	-- Reapply after the player respawns.
+	LocalPlayer.CharacterAdded:Connect(function()
+		task.wait(0.5)
+		if isOn() then applyRecolor() end
+	end)
 end
 
 local FunTabBox = Tabs.Main:AddLeftTabbox()
