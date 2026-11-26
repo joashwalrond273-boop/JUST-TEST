@@ -56,16 +56,37 @@ end
 local ThemeManager = loadObsidian("addons/ThemeManager.lua")
 local SaveManager = loadObsidian("addons/SaveManager.lua")
 
--- Ensure Lucide Icons are properly loaded for tabs & groupboxes
+-- Ensure Lucide Icons are properly loaded for tabs & groupboxes (cached locally like Obsidian)
 pcall(function()
 	local lucideModule = nil
-	pcall(function()
-		lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua"))()
-	end)
-	if not lucideModule then
+	local cachePath = "Obsidian/lucide.lua"
+	local okCached, cachedSource = pcall(readfile, cachePath)
+	if okCached and type(cachedSource) == "string" and cachedSource ~= "" then
 		pcall(function()
-			lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua"))()
+			lucideModule = loadstring(cachedSource)()
 		end)
+	end
+	if not lucideModule then
+		local fetched = nil
+		pcall(function()
+			fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua")
+		end)
+		if not fetched or fetched == "" then
+			pcall(function()
+				fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua")
+			end)
+		end
+		if fetched and fetched ~= "" then
+			pcall(function()
+				lucideModule = loadstring(fetched)()
+			end)
+			if lucideModule and writefile then
+				pcall(function()
+					if makefolder then pcall(makefolder, "Obsidian") end
+					writefile(cachePath, fetched)
+				end)
+			end
+		end
 	end
 	if lucideModule and Library.SetIconModule then
 		Library:SetIconModule(lucideModule)
@@ -94,11 +115,17 @@ Library.ShowToggleFrameInKeybinds = true
 
 -- Helpers
 local function waitForChild(parent, name, timeout)
-	timeout = timeout or 10
-	local start = tick()
+	if not parent then return nil end
 	local child = parent:FindFirstChild(name)
+	if child then return child end
+	timeout = timeout or 10
+	local ok, waited = pcall(parent.WaitForChild, parent, name, timeout)
+	if ok then
+		return waited
+	end
+	local start = tick()
 	while not child and tick() - start < timeout do
-		task.wait()
+		task.wait(0.1)
 		child = parent:FindFirstChild(name)
 	end
 	return child
@@ -268,7 +295,9 @@ local function setBehaviorDisabled(instance, disabled)
 		return false
 	end
 	local ok = pcall(function()
-		instance.Disabled = disabled
+		if instance.Disabled ~= disabled then
+			instance.Disabled = disabled
+		end
 	end)
 	return ok
 end
@@ -291,7 +320,7 @@ local function getKeyedRemotes()
 		return keyed
 	end
 	pcall(function()
-		for _, fn in next, getgc(true) do
+		for _, fn in next, getgc(false) do
 			if typeof(fn) == "function" and islclosure(fn) then
 				local constants = debug.getconstants(fn)
 				if rawget(constants, 1) == "Destroy" and rawget(constants, 2) == "new" then
