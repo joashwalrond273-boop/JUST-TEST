@@ -6642,21 +6642,26 @@ SilentAimHK.Main:AddSlider("SAHKFOVRadius", {
 	Compact = true,
 })
 
+SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
+	Text = "Target Part",
+	Values = { "Head", "Torso", "HumanoidRootPart", "Random" },
+	Default = "Head",
+})
+
 -- Hides the ring only; the FOV Radius limit stays active either way.
 SilentAimHK.Main:AddCheckbox("SAHKShowRing", {
 	Text = "Show FOV Circle",
 	Default = true,
 })
 
-SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
-	Text = "Wall Check",
+SilentAimHK.Main:AddCheckbox("SAHK360Mode", {
+	Text = "360 Mode",
 	Default = false,
 })
 
-SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
-	Text = "Target Part",
-	Values = { "Head", "Torso", "HumanoidRootPart", "Random" },
-	Default = "Head",
+SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
+	Text = "Wall Check",
+	Default = false,
 })
 
 SilentAimHK.Config:AddCheckbox("SAHKWallBang", {
@@ -6669,9 +6674,13 @@ SilentAimHK.Config:AddCheckbox("SAHKBulletTeleport", {
 	Default = false,
 })
 
-SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
-	Text = "360 Mode",
-	Default = false,
+-- Who silent aim is allowed to lock onto. "All" keeps the current behaviour
+-- (anyone but you and your teammates); picking a name restricts it to that one
+-- player. The list is kept up to date as players join / leave.
+SilentAimHK.Config:AddDropdown("SAHKTargetPlayer", {
+	Text = "Target Player",
+	Values = {"All"},
+	Default = "All",
 })
 
 SilentAimHK.Config:AddDropdown("SAHKPriorityMode", {
@@ -9258,19 +9267,16 @@ function SilentAimHK.isVisible(player, character)
 	return visible
 end
 
--- Ballistic prediction. The lead time is how long the shot takes to reach the
--- target (distance / projectile speed). Two corrections are applied with it:
---   * horizontal -- target velocity * lead time, so a moving target is led.
---     (the faster the target, the further ahead the aim lands)
---   * vertical -- the gravity drop over that time (0.5 * g * t^2), aimed above
---     the target to counter the fall. This is what stops ranged shots landing at
---     an enemy's feet: the further the target, the higher the aim, and up close
---     the lift is ~0 so point-blank shots are unaffected.
--- PROJECTILE_SPEED is the assumed travel speed of the game's projectiles; set it
--- to match the weapon in use (lower = leads harder and lifts harder). Both
--- constants live on the table to stay clear of the local register budget.
+-- Prediction. The lead time is how long the shot takes to reach the target
+-- (distance / projectile speed) and the lead is that time times the target's own
+-- velocity, so the faster the target moves the further ahead the aim lands.
+-- PROJECTILE_SPEED is the assumed travel speed of the game's projectiles.
+-- AIM_HEIGHT is a small, fixed upward offset so every shot sits a little higher
+-- than the target part. Both constants live on the table to stay clear of the
+-- local register budget.
 SilentAimHK.PROJECTILE_SPEED = 400
-SilentAimHK.MAX_LEAD = 0.5
+SilentAimHK.MAX_LEAD = 0.3
+SilentAimHK.AIM_HEIGHT = 1.5
 
 function SilentAimHK.predict(part)
 	if not part or not part.Parent then
@@ -9280,33 +9286,28 @@ function SilentAimHK.predict(part)
 	-- AssemblyLinearVelocity is the current API; Velocity is the older name kept
 	-- as a fallback for executors that do not expose the new one.
 	local vel = part.AssemblyLinearVelocity or part.Velocity
+	local lift = Vector3.new(0, SilentAimHK.AIM_HEIGHT, 0)
 	if not vel then
-		return pos
+		return pos + lift
 	end
-	-- Distance from the shooter, so the corrections match this shot's travel time.
+	-- Distance from the shooter, so the lead matches this shot's travel time.
 	local character = getCharacter()
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local origin = root and root.Position or pos
 	local dist = (pos - origin).Magnitude
-
-	-- Travel time, capped so a very far / fast shot cannot drag the aim far past
-	-- the target.
-	local t = math.clamp(dist / SilentAimHK.PROJECTILE_SPEED, 0, SilentAimHK.MAX_LEAD)
-
-	-- Horizontal lead: only for a moving target, so a standing enemy is hit dead
-	-- centre.
-	local lead = (vel.Magnitude >= 1) and (vel * t) or Vector3.zero
-	-- Vertical drop compensation: always applied, so even a still target at range
-	-- is hit on the head instead of the feet.
-	local lift = Vector3.new(0, 0.5 * (workspace.Gravity or 196.2) * t * t, 0)
-
+	-- Lead for a moving target; zero for one standing still.
+	local lead = (vel.Magnitude >= 1)
+		and (vel * math.clamp(dist / SilentAimHK.PROJECTILE_SPEED, 0, SilentAimHK.MAX_LEAD))
+		or Vector3.zero
+	-- Aim a little higher than the target part.
 	return pos + lead + lift
 end
 
 -- Picks the target part every throttle tick. There is no distance cap: every
 -- player with a live, visible-to-the-loop character is a candidate, so shots
--- register at any range. FOV Radius limits the search unless 360 Mode is on;
--- Priority Mode then decides which valid target wins.
+-- register at any range. The Target Player dropdown can narrow this to a single
+-- player; FOV Radius limits the search unless 360 Mode is on; Priority Mode then
+-- decides which valid target wins.
 function SilentAimHK.findTarget()
 	local camera = workspace.CurrentCamera
 	local character = getCharacter()
@@ -9317,12 +9318,16 @@ function SilentAimHK.findTarget()
 	local radius = (Options.SAHKFOVRadius and Options.SAHKFOVRadius.Value) or 100
 	local wallCheck = (Toggles.SAHKWallCheck and Toggles.SAHKWallCheck.Value) or false
 	local priority = (Options.SAHKPriorityMode and Options.SAHKPriorityMode.Value) or "Crosshair"
+	-- "All" (default) lets silent aim pick anyone; a specific name restricts it to
+	-- that one player.
+	local targetPlayer = (Options.SAHKTargetPlayer and Options.SAHKTargetPlayer.Value) or "All"
 
 	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	local bestPart, bestScore = nil, math.huge
 
 	for _, otherPlayer in ipairs(TSG_PlayerList) do
-		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer) then
+		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer)
+			and (targetPlayer == "All" or otherPlayer.Name == targetPlayer) then
 			local otherChar = otherPlayer.Character
 			local humanoid = otherChar and otherChar:FindFirstChildOfClass("Humanoid")
 			if otherChar and humanoid and humanoid.Health > 0 and not otherChar:FindFirstChildOfClass("ForceField") then
@@ -15882,6 +15887,17 @@ local function updateAttachPlayerList()
 				Options.ReachTarget:SetValue(current)
 			else
 				Options.ReachTarget:SetValue("All")
+			end
+		end
+	end)
+	pcall(function()
+		if Options.SAHKTargetPlayer then
+			local current = Options.SAHKTargetPlayer.Value
+			Options.SAHKTargetPlayer:SetValues(kaList)
+			if table.find(kaList, current) then
+				Options.SAHKTargetPlayer:SetValue(current)
+			else
+				Options.SAHKTargetPlayer:SetValue("All")
 			end
 		end
 	end)
