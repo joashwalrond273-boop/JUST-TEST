@@ -4524,6 +4524,29 @@ do
 	end)
 end
 
+-- The two CONFIG checkboxes drive which rows underneath them are shown, but
+-- Obsidian's :OnChanged keeps only one handler per element and the cosmetics
+-- colour code above registers its own callback on both of them, which silently
+-- replaced the updateConfigVisibility wiring done in the menu. Wrap whatever is
+-- registered last so the checkbox still runs its own logic and refreshes the
+-- rows, and do it down here so nothing can overwrite it again. Global on purpose:
+-- the main chunk is at Luau's 200-local register limit.
+wireConfigVisibility = function()
+	local function chain(element, handler)
+		if not element or not element.OnChanged then return end
+		local previous = element.Changed
+		element:OnChanged(function(...)
+			if previous then pcall(previous, ...) end
+			handler(...)
+		end)
+	end
+
+	chain(Toggles.CosmeticColorChange, updateConfigVisibility)
+	chain(Toggles.RecolorEquipped, updateConfigVisibility)
+end
+
+wireConfigVisibility()
+
 local FunTabBox = Tabs.Main:AddLeftTabbox()
 local AttachTab = FunTabBox:AddTab("ATTACH", "link")
 local FlingTab = FunTabBox:AddTab("FLING", "swords")
