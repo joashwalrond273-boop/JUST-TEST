@@ -1580,7 +1580,7 @@ end
 
 
 Library.Font = Enum.Font.Fantasy
-Library.CornerRadius = 3
+Library.CornerRadius = 20
 
 -- Window
 local Window = Library:CreateWindow({
@@ -1592,7 +1592,7 @@ local Window = Library:CreateWindow({
 	Resizable = true,
 	NotifySide = "Right",
 	ShowCustomCursor = false,
-	CornerRadius = 3,
+	CornerRadius = 20,
 })
 
 local Tabs = {
@@ -18724,7 +18724,7 @@ MenuGroup:AddSlider("UIBackgroundTransparency", {
 
 MenuGroup:AddSlider("UIBackgroundColorTransparency", {
 	Text = "Background Color Transparency",
-	Default = 18,
+	Default = 30,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18750,8 +18750,8 @@ Library.ToggleKeybind = Options.MenuKeybind
 ThemeManager:SetLibrary(Library)
 -- Set default color scheme
 ThemeManager:SetDefaultTheme({
-	AccentColor = "ff0000", -- RGB(255, 0, 0)
-	OutlineColor = "2a3948", -- RGB(42, 57, 72)
+	AccentColor = "18e0e0", -- RGB(24, 224, 224)
+	OutlineColor = "193338", -- RGB(25, 51, 56)
 	MainColor = "1a2a34", -- RGB(26, 42, 52)
 	BackgroundColor = "16232a", -- RGB(22, 35, 42)
 	FontColor = "d8dde9", -- RGB(216, 221, 233)
