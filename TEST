@@ -1855,11 +1855,14 @@ CosmeticsGroup:AddDropdown("BackWearSelect", {
 	Multi = true,
 })
 
-CosmeticsGroup:AddDivider()
+-- CONFIG group: sits in the right column, next to the COSMETICS menu, and
+-- holds all of the colour / target controls. Global on purpose: the main
+-- chunk is already at Luau's 200-local register limit.
+ConfigGroup = Tabs.Main:AddRightGroupbox("CONFIG", "settings")
 
 -- Recolour the character's own body (head, torso, arms, legs) independently
--- of the gear and cosmetics below.
-CosmeticsGroup:AddCheckbox("BodyColorChange", {
+-- of the gear and cosmetics.
+ConfigGroup:AddCheckbox("BodyColorChange", {
 	Text = "Change Body Color",
 	Default = false,
 }):AddColorPicker("BodyColorPicker", {
@@ -1867,11 +1870,10 @@ CosmeticsGroup:AddCheckbox("BodyColorChange", {
 	Title = "Body Color",
 })
 
--- Recolour the gear the player already has equipped (Head, Shirt, Pants, Bag)
--- rather than the cosmetic items from the menu above. The checkbox applies the
--- chosen colour to the part selected in the dropdown; turning it off restores
--- the original colours.
-CosmeticsGroup:AddCheckbox("RecolorEquipped", {
+-- Recolour the gear the player already has equipped (Head, Shirt, Pants, Bag).
+-- The checkbox applies the chosen colour to the parts ticked in the dropdown;
+-- turning it off restores the original colours.
+ConfigGroup:AddCheckbox("RecolorEquipped", {
 	Text = "Recolor Equipped Gear",
 	Default = false,
 }):AddColorPicker("RecolorEquippedColor", {
@@ -1879,45 +1881,50 @@ CosmeticsGroup:AddCheckbox("RecolorEquipped", {
 	Title = "Gear Color",
 })
 
-CosmeticsGroup:AddDropdown("RecolorEquippedTarget", {
+ConfigGroup:AddDropdown("RecolorEquippedTarget", {
 	Text = "Target",
 	Values = { "Head", "Shirt", "Pants", "Bag" },
 	Default = { "Head" },
 	Multi = true,
 })
 
+-- Master switch for the cosmetic recolouring below: while this is off the worn
+-- cosmetics keep their own colours no matter what is ticked underneath.
+ConfigGroup:AddCheckbox("CosmeticColorChange", {
+	Text = "Color Cosmetics",
+	Default = false,
+})
+
 -- Cosmetic color changer: tints the in-game cosmetic items the script equips
--- for you (the Head / Body / Pants / Back Wear picked above), not your own
--- gear. Tick the categories to tint in the dropdown, then set each colour
--- below it. Unticking a category puts the cosmetic's own colours back.
-CosmeticsGroup:AddDropdown("WearColorSelect", {
+-- for you (the Head / Body / Pants / Back Wear picked in the Cosmetics menu).
+-- Tick the categories to tint, then set each colour below it. Unticking a
+-- category puts the cosmetic's own colours back.
+ConfigGroup:AddDropdown("WearColorSelect", {
 	Text = "Recolor Cosmetics",
 	Values = { "Head Wear", "Body Wear", "Pants Wear", "Back Wear" },
 	Default = {},
 	Multi = true,
 })
 
-CosmeticsGroup:AddLabel("Head Wear Color"):AddColorPicker("CosmeticSelectColor", {
+ConfigGroup:AddLabel("Head Wear Color"):AddColorPicker("CosmeticSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Head Wear Color",
 })
 
-CosmeticsGroup:AddLabel("Body Wear Color"):AddColorPicker("BodyWearSelectColor", {
+ConfigGroup:AddLabel("Body Wear Color"):AddColorPicker("BodyWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Body Wear Color",
 })
 
-CosmeticsGroup:AddLabel("Pants Wear Color"):AddColorPicker("PantsWearSelectColor", {
+ConfigGroup:AddLabel("Pants Wear Color"):AddColorPicker("PantsWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Pants Wear Color",
 })
 
-CosmeticsGroup:AddLabel("Back Wear Color"):AddColorPicker("BackWearSelectColor", {
+ConfigGroup:AddLabel("Back Wear Color"):AddColorPicker("BackWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Back Wear Color",
 })
-
-CosmeticsGroup:AddDivider()
 
 -- Hit Sounds (built here, but the controls live in the MISC group so the
 -- Cosmetics menu stays purely visual).
@@ -3103,6 +3110,11 @@ do
 	-- Which wear colours are active is chosen from one shared multi-select
 	-- dropdown ("Head Wear", "Body Wear", "Pants Wear", "Back Wear")
 	local function isWearColorOn(category)
+		-- "Color Cosmetics" is the master switch; the category dropdown only
+		-- decides which pieces get tinted once it is on.
+		if not (Toggles.CosmeticColorChange and Toggles.CosmeticColorChange.Value) then
+			return false
+		end
 		local sel = Options.WearColorSelect and Options.WearColorSelect.Value
 		return typeof(sel) == "table" and sel[category] == true
 	end
@@ -3532,18 +3544,24 @@ do
 		end)
 	end
 
+	-- Head piece tinting is driven by the master switch and the category
+	-- dropdown together, so either one changing re-evaluates the head pieces.
+	local headColorWasOn = false
+	local function refreshHeadColor()
+		local on = isWearColorOn("Head Wear")
+		if on == headColorWasOn then return end
+		headColorWasOn = on
+		if on then
+			applyHeadColor()
+		else
+			restoreHeadColors()
+		end
+	end
+	if Toggles.CosmeticColorChange then
+		Toggles.CosmeticColorChange:OnChanged(refreshHeadColor)
+	end
 	if Options.WearColorSelect then
-		local headColorWasOn = false
-		Options.WearColorSelect:OnChanged(function()
-			local on = isWearColorOn("Head Wear")
-			if on == headColorWasOn then return end
-			headColorWasOn = on
-			if on then
-				applyHeadColor()
-			else
-				restoreHeadColors()
-			end
-		end)
+		Options.WearColorSelect:OnChanged(refreshHeadColor)
 	end
 
 	-- ============================================================
@@ -4017,18 +4035,24 @@ do
 			end)
 		end
 
+		-- Tinting for this wear type follows the master switch and the category
+		-- dropdown, so either one changing re-evaluates the worn pieces.
+		local colorWasOn = false
+		local function refreshWearColor()
+			local on = wearColorEnabled()
+			if on == colorWasOn then return end
+			colorWasOn = on
+			if on then
+				applyWearColor()
+			else
+				restoreWearColors()
+			end
+		end
 		if Options.WearColorSelect then
-			local colorWasOn = false
-			Options.WearColorSelect:OnChanged(function()
-				local on = wearColorEnabled()
-				if on == colorWasOn then return end
-				colorWasOn = on
-				if on then
-					applyWearColor()
-				else
-					restoreWearColors()
-				end
-			end)
+			Options.WearColorSelect:OnChanged(refreshWearColor)
+		end
+		if Toggles.CosmeticColorChange then
+			Toggles.CosmeticColorChange:OnChanged(refreshWearColor)
 		end
 	end
 
