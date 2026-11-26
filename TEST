@@ -6618,6 +6618,19 @@ SilentAimHK.Main:AddToggle("SilentAimHK", {
 	Default = false,
 })
 
+-- Hides the ring only; the FOV Radius limit stays active either way.
+SilentAimHK.Main:AddCheckbox("SAHKShowRing", {
+	Text = "Show FOV Circle",
+	Default = true,
+})
+
+SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
+	Text = "Wall Check",
+	Default = false,
+})
+
+SilentAimHK.Main:AddDivider()
+
 -- Slot System: while on, silent aim arms itself only while a tool in one of the
 -- picked slots is in hand (so it turns on / off with the weapon, and the main
 -- Silent Aim toggle is not needed). Off = silent aim follows the main toggle.
@@ -6646,17 +6659,6 @@ SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
 	Text = "Target Part",
 	Values = { "Head", "Torso", "HumanoidRootPart", "Random" },
 	Default = "Head",
-})
-
--- Hides the ring only; the FOV Radius limit stays active either way.
-SilentAimHK.Main:AddCheckbox("SAHKShowRing", {
-	Text = "Show FOV Circle",
-	Default = true,
-})
-
-SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
-	Text = "Wall Check",
-	Default = false,
 })
 
 SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
