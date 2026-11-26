@@ -18612,7 +18612,14 @@ function TSG_ApplyUIBackgroundTransparency(alpha)
 		return
 	end
 
-	local function apply(instance)
+	-- Panels such as the groupboxes, the tab sidebar and tabboxes are drawn *inside*
+	-- the window, on top of the already-transparent backdrop. Applying the plain
+	-- alpha there would just let the window colour show through the panel, so the
+	-- panel would still look solid. Compound it so the panel reveals the game at
+	-- roughly the same rate as the backdrop behind it.
+	local panelAlpha = 1 - (1 - alpha) ^ 8
+
+	local function apply(instance, target)
 		if not instance then
 			return
 		end
@@ -18623,18 +18630,22 @@ function TSG_ApplyUIBackgroundTransparency(alpha)
 		end
 
 		local original = TSG_BackgroundTransparencyCache[instance]
-		instance.BackgroundTransparency = original + (1 - original) * alpha
+		instance.BackgroundTransparency = original + (1 - original) * target
 	end
 
 	-- The window backdrop itself.
-	apply(mainFrame)
+	apply(mainFrame, alpha)
 
 	-- Everything that paints with the library's "BackgroundColor" scheme: the
-	-- groupbox panels inside the window as well as the popup menus (dropdown
-	-- lists, right-click context menus, tooltips) which live in the Overlay.
+	-- groupbox / sidebar / tabbox panels inside the window, plus the popup menus
+	-- (dropdown lists, right-click context menus, tooltips) which live in Overlay.
 	for instance, properties in Library.Registry do
 		if properties.BackgroundColor3 == "BackgroundColor" then
-			apply(instance)
+			if instance:IsDescendantOf(mainFrame) then
+				apply(instance, panelAlpha)
+			else
+				apply(instance, alpha)
+			end
 		end
 	end
 end
@@ -18694,7 +18705,7 @@ MenuGroup:AddSlider("UICornerSlider", {
 
 MenuGroup:AddSlider("UIBackgroundTransparency", {
 	Text = "UI Transparency",
-	Default = 35,
+	Default = 18,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18736,7 +18747,7 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
 
--- Obsidian only runs a slider's Callback on changes, so the 35% default is
+-- Obsidian only runs a slider's Callback on changes, so the 18% default is
 -- applied here once every panel and menu exists (and after a saved config,
 -- if any, has already overridden the slider value).
 TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
