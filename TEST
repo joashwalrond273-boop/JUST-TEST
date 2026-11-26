@@ -6761,25 +6761,6 @@ CombatReach:AddToggle("Reach", {
 	Default = false,
 })
 
--- Melee counterpart of Bullet Teleport: a normal swing fires the game's melee
--- remote at every valid target within Melee Range, ignoring the Hitbox Angle.
--- Reach itself is left untouched.
-CombatReach:AddToggle("ReachMeleeTeleport", {
-	Text = "Melee Teleport",
-	Default = false,
-})
-
--- How far Melee Teleport reaches. The default 10000 (the maximum) is
--- effectively unlimited, so a swing lands at any normal range.
-CombatReach:AddSlider("ReachMeleeRange", {
-	Text = "Melee Range",
-	Default = 10000,
-	Min = 1,
-	Max = 10000,
-	Rounding = 0,
-	Compact = true,
-})
-
 CombatReach:AddDropdown("ReachTarget", {
 	Text = "Target Player",
 	Values = {"All"},
@@ -8916,14 +8897,8 @@ end)
 local function connectReachTool(tool)
 	disconnect("ReachToolConn")
 	track("ReachToolConn", tool.Activated:Connect(function()
-		-- Melee Teleport reuses the same melee remote as Reach but uses its own
-		-- Melee Range and drops the cone limit, so a swing lands on players out
-		-- to that distance -- the melee counterpart of Bullet Teleport.
-		local meleeTeleport = Toggles.ReachMeleeTeleport and Toggles.ReachMeleeTeleport.Value
-		if Toggles.Reach.Value or meleeTeleport then
-			local range = meleeTeleport
-				and ((Options.ReachMeleeRange and Options.ReachMeleeRange.Value) or 10000)
-				or Options.ReachRange.Value
+		if Toggles.Reach.Value then
+			local range = Options.ReachRange.Value
 			local maxAngle = (Options.ReachAngle and Options.ReachAngle.Value) or 35
 			local coneThreshold = math.cos(math.rad(maxAngle / 2))
 			local root = getRootPart()
@@ -8936,7 +8911,6 @@ local function connectReachTool(tool)
 				local reachTargetSetting = (Options.ReachTarget and Options.ReachTarget.Value) or "All"
 
 				local function passesAngleCheck(targetPos)
-					if meleeTeleport then return true end
 					local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
 					if dir.Magnitude <= 0 then return true end
 					return forward:Dot(dir.Unit) >= coneThreshold
