@@ -18600,10 +18600,26 @@ task.spawn(updateTeleportPlayerList)
 -- ==========================================
 -- UI SETTINGS
 -- ==========================================
--- Background transparency helper. Kept global on purpose: the main chunk is at
--- Luau's 200-local register limit, so this must not add any new locals.
+-- Background transparency helpers. Kept global on purpose: the main chunk is at
+-- Luau's 200-local register limit, so these must not add any new locals.
 TSG_BackgroundTransparencyCache = TSG_BackgroundTransparencyCache or {}
 
+-- Applies `target` transparency to a single instance, remembering the library's
+-- own value the first time so "0%" restores it exactly.
+function TSG_ApplyInstanceTransparency(instance, target)
+	if not instance then
+		return
+	end
+
+	if TSG_BackgroundTransparencyCache[instance] == nil then
+		TSG_BackgroundTransparencyCache[instance] = instance.BackgroundTransparency
+	end
+
+	local original = TSG_BackgroundTransparencyCache[instance]
+	instance.BackgroundTransparency = original + (1 - original) * target
+end
+
+-- "UI Transparency": fades the window backdrop itself.
 function TSG_ApplyUIBackgroundTransparency(alpha)
 	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
 
@@ -18612,39 +18628,29 @@ function TSG_ApplyUIBackgroundTransparency(alpha)
 		return
 	end
 
-	-- Panels such as the groupboxes, the tab sidebar and tabboxes are drawn *inside*
-	-- the window, on top of the already-transparent backdrop. Applying the plain
-	-- alpha there would just let the window colour show through the panel, so the
-	-- panel would still look solid. Compound it so the panel reveals the game at
-	-- roughly the same rate as the backdrop behind it.
+	TSG_ApplyInstanceTransparency(mainFrame, alpha)
+end
+
+-- "Background Color Transparency": fades everything painted with the library's
+-- "BackgroundColor" scheme -- the groupboxes, sidebar and tabboxes inside the
+-- window, plus the popup menus (dropdown lists, right-click menus, tooltips).
+function TSG_ApplyBackgroundColorTransparency(alpha)
+	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
+
+	local mainFrame = Library.Window and Library.Window.MainFrame
+
+	-- Those panels are drawn *inside* the window, on top of the already-transparent
+	-- backdrop. Applying the plain alpha there would just let the window colour show
+	-- through them and they would still look solid, so nested panels get a compounded
+	-- alpha that reveals the game at a similar rate as the backdrop behind them.
 	local panelAlpha = 1 - (1 - alpha) ^ 8
 
-	local function apply(instance, target)
-		if not instance then
-			return
-		end
-
-		-- Remember the library's own value once so "0%" restores it exactly.
-		if TSG_BackgroundTransparencyCache[instance] == nil then
-			TSG_BackgroundTransparencyCache[instance] = instance.BackgroundTransparency
-		end
-
-		local original = TSG_BackgroundTransparencyCache[instance]
-		instance.BackgroundTransparency = original + (1 - original) * target
-	end
-
-	-- The window backdrop itself.
-	apply(mainFrame, alpha)
-
-	-- Everything that paints with the library's "BackgroundColor" scheme: the
-	-- groupbox / sidebar / tabbox panels inside the window, plus the popup menus
-	-- (dropdown lists, right-click context menus, tooltips) which live in Overlay.
 	for instance, properties in Library.Registry do
 		if properties.BackgroundColor3 == "BackgroundColor" then
-			if instance:IsDescendantOf(mainFrame) then
-				apply(instance, panelAlpha)
+			if mainFrame and instance:IsDescendantOf(mainFrame) then
+				TSG_ApplyInstanceTransparency(instance, panelAlpha)
 			else
-				apply(instance, alpha)
+				TSG_ApplyInstanceTransparency(instance, alpha)
 			end
 		end
 	end
@@ -18705,7 +18711,7 @@ MenuGroup:AddSlider("UICornerSlider", {
 
 MenuGroup:AddSlider("UIBackgroundTransparency", {
 	Text = "UI Transparency",
-	Default = 18,
+	Default = 10,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18713,6 +18719,19 @@ MenuGroup:AddSlider("UIBackgroundTransparency", {
 	Compact = true,
 	Callback = function(value)
 		TSG_ApplyUIBackgroundTransparency(value / 100)
+	end
+})
+
+MenuGroup:AddSlider("UIBackgroundColorTransparency", {
+	Text = "Background Color Transparency",
+	Default = 18,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Suffix = "%",
+	Compact = true,
+	Callback = function(value)
+		TSG_ApplyBackgroundColorTransparency(value / 100)
 	end
 })
 
@@ -18747,10 +18766,11 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
 
--- Obsidian only runs a slider's Callback on changes, so the 18% default is
--- applied here once every panel and menu exists (and after a saved config,
--- if any, has already overridden the slider value).
+-- Obsidian only runs a slider's Callback on changes, so the default transparency
+-- values are applied here once every panel and menu exists (and after a saved
+-- config, if any, has already overridden the slider values).
 TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
+TSG_ApplyBackgroundColorTransparency(Options.UIBackgroundColorTransparency.Value / 100)
 
 Library:OnUnload(function()
 	if Toggles.Reach and Toggles.Reach.Value then
