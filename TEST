@@ -18600,6 +18600,43 @@ task.spawn(updateTeleportPlayerList)
 -- ==========================================
 -- UI SETTINGS
 -- ==========================================
+-- Background transparency helper. Kept global on purpose: the main chunk is at
+-- Luau's 200-local register limit, so this must not add any new locals.
+TSG_BackgroundTransparencyCache = TSG_BackgroundTransparencyCache or {}
+
+function TSG_ApplyUIBackgroundTransparency(alpha)
+	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
+
+	local mainFrame = Library.Window and Library.Window.MainFrame
+	if not mainFrame then
+		return
+	end
+
+	local function apply(instance)
+		if not instance then
+			return
+		end
+
+		-- Remember the library's own value once so "0%" restores it exactly.
+		if TSG_BackgroundTransparencyCache[instance] == nil then
+			TSG_BackgroundTransparencyCache[instance] = instance.BackgroundTransparency
+		end
+
+		local original = TSG_BackgroundTransparencyCache[instance]
+		instance.BackgroundTransparency = original + (1 - original) * alpha
+	end
+
+	-- The window backdrop itself.
+	apply(mainFrame)
+
+	-- Every panel inside the window paints with the library's "BackgroundColor" scheme.
+	for instance, properties in Library.Registry do
+		if properties.BackgroundColor3 == "BackgroundColor" and instance:IsDescendantOf(mainFrame) then
+			apply(instance)
+		end
+	end
+end
+
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("MENU", "wrench")
 
 MenuGroup:AddToggle("KeybindMenuOpen", {
@@ -18650,6 +18687,19 @@ MenuGroup:AddSlider("UICornerSlider", {
 	Compact = true,
 	Callback = function(value)
 		Window:SetCornerRadius(value)
+	end
+})
+
+MenuGroup:AddSlider("UIBackgroundTransparency", {
+	Text = "UI Transparency",
+	Default = 0,
+	Min = 0,
+	Max = 100,
+	Rounding = 0,
+	Suffix = "%",
+	Compact = true,
+	Callback = function(value)
+		TSG_ApplyUIBackgroundTransparency(value / 100)
 	end
 })
 
