@@ -6637,7 +6637,7 @@ SilentAimHK.Main:AddSlider("SAHKFOVRadius", {
 	Text = "FOV Radius",
 	Default = 100,
 	Min = 0,
-	Max = 500,
+	Max = 1000,
 	Rounding = 0,
 	Compact = true,
 })
@@ -6661,11 +6661,16 @@ SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
 
 SilentAimHK.Main:AddSlider("SAHKTargetRange", {
 	Text = "Target Range",
-	Default = 500,
+	Default = 10000,
 	Min = 5,
-	Max = 1000,
+	Max = 10000,
 	Rounding = 0,
 	Compact = true,
+})
+
+SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
+	Text = "360 Mode",
+	Default = false,
 })
 
 SilentAimHK.Config:AddCheckbox("SAHKWallBang", {
@@ -6678,9 +6683,13 @@ SilentAimHK.Config:AddCheckbox("SAHKBulletTeleport", {
 	Default = false,
 })
 
-SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
-	Text = "360 Mode",
-	Default = false,
+-- Who silent aim is allowed to lock onto. "All" keeps the current behaviour
+-- (anyone but you and your teammates); picking a name restricts it to that one
+-- player. The list is kept up to date as players join / leave.
+SilentAimHK.Config:AddDropdown("SAHKTargetPlayer", {
+	Text = "Target Player",
+	Values = {"All"},
+	Default = "All",
 })
 
 SilentAimHK.Config:AddDropdown("SAHKPriorityMode", {
@@ -9283,15 +9292,19 @@ function SilentAimHK.findTarget()
 
 	local threeSixty = (Toggles.SAHK360Mode and Toggles.SAHK360Mode.Value) or false
 	local radius = (Options.SAHKFOVRadius and Options.SAHKFOVRadius.Value) or 100
-	local range = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 500
+	local range = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 10000
 	local wallCheck = (Toggles.SAHKWallCheck and Toggles.SAHKWallCheck.Value) or false
 	local priority = (Options.SAHKPriorityMode and Options.SAHKPriorityMode.Value) or "Crosshair"
+	-- "All" (default) lets silent aim pick anyone; a specific name restricts it to
+	-- that one player.
+	local targetPlayer = (Options.SAHKTargetPlayer and Options.SAHKTargetPlayer.Value) or "All"
 
 	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	local bestPart, bestScore = nil, math.huge
 
 	for _, otherPlayer in ipairs(TSG_PlayerList) do
-		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer) then
+		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer)
+			and (targetPlayer == "All" or otherPlayer.Name == targetPlayer) then
 			local otherChar = otherPlayer.Character
 			local humanoid = otherChar and otherChar:FindFirstChildOfClass("Humanoid")
 			if otherChar and humanoid and humanoid.Health > 0 and not otherChar:FindFirstChildOfClass("ForceField") then
@@ -9554,8 +9567,11 @@ function SilentAimHK.Namecall(original, ...)
 	local targetPos = SilentAimHK.predict(hitPart)
 	if not targetPos then return original(...) end
 
-	local wallBang = (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false
 	local bulletTeleport = (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) or false
+	-- Bullet Teleport drops the shot in beside the target, so it also needs the
+	-- WallBang spoof to punch through anything between the shooter and the
+	-- target; switching on either one therefore enables the wallbang behaviour.
+	local wallBang = bulletTeleport or ((Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false)
 
 	if isRay then
 		local raySelf, origin, direction = ...
@@ -9795,8 +9811,10 @@ function SilentAimHK.sync()
 		end))
 		track("SilentAimHKLoop", RunService.Heartbeat:Connect(function(dt)
 			-- Refresh the WallBang water sample here, off the hook's stack, so the
-			-- intercept itself never triggers another engine call.
-			if Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value then
+			-- intercept itself never triggers another engine call. Bullet Teleport
+			-- also uses the wallbang path, so it needs the same sample.
+			if (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value)
+				or (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) then
 				SilentAimHK.InWater = isInWater()
 			end
 			-- Same idea for the mouse guard: keep the "weapon in hand" sample up to
@@ -15853,6 +15871,17 @@ local function updateAttachPlayerList()
 				Options.ReachTarget:SetValue(current)
 			else
 				Options.ReachTarget:SetValue("All")
+			end
+		end
+	end)
+	pcall(function()
+		if Options.SAHKTargetPlayer then
+			local current = Options.SAHKTargetPlayer.Value
+			Options.SAHKTargetPlayer:SetValues(kaList)
+			if table.find(kaList, current) then
+				Options.SAHKTargetPlayer:SetValue(current)
+			else
+				Options.SAHKTargetPlayer:SetValue("All")
 			end
 		end
 	end)
