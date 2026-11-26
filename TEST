@@ -18748,12 +18748,13 @@ end)
 Library.ToggleKeybind = Options.MenuKeybind
 
 ThemeManager:SetLibrary(Library)
--- Set default accent and outline color
+-- Set default color scheme
 ThemeManager:SetDefaultTheme({
 	AccentColor = "ff0000", -- RGB(255, 0, 0)
-	OutlineColor = "232929", -- RGB(35, 41, 41)
-	MainColor = "1a2222", -- RGB(26, 34, 34)
-	BackgroundColor = "0d1717", -- RGB(13, 23, 23)
+	OutlineColor = "2a3948", -- RGB(42, 57, 72)
+	MainColor = "1a2a34", -- RGB(26, 42, 52)
+	BackgroundColor = "16232a", -- RGB(22, 35, 42)
+	FontColor = "d8dde9", -- RGB(216, 221, 233)
 	FontFace = "Jura" -- default font face (was Code)
 })
 SaveManager:SetLibrary(Library)
