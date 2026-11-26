@@ -6654,13 +6654,13 @@ SilentAimHK.Main:AddCheckbox("SAHKShowRing", {
 	Default = true,
 })
 
-SilentAimHK.Main:AddCheckbox("SAHK360Mode", {
-	Text = "360 Mode",
+SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
+	Text = "Wall Check",
 	Default = false,
 })
 
-SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
-	Text = "Wall Check",
+SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
+	Text = "360 Mode",
 	Default = false,
 })
 
@@ -6681,6 +6681,17 @@ SilentAimHK.Config:AddDropdown("SAHKTargetPlayer", {
 	Text = "Target Player",
 	Values = {"All"},
 	Default = "All",
+})
+
+-- Caps how far away a player can be picked. The default 10000 (the maximum) is
+-- effectively unlimited, so shots register at any normal range.
+SilentAimHK.Config:AddSlider("SAHKTargetRange", {
+	Text = "Target Range",
+	Default = 10000,
+	Min = 0,
+	Max = 10000,
+	Rounding = 0,
+	Compact = true,
 })
 
 SilentAimHK.Config:AddDropdown("SAHKPriorityMode", {
@@ -6724,7 +6735,7 @@ SilentAimHK.Config:AddDropdown("SAHKAimMethods", {
 })
 
 SilentAimHK.Config:AddInput("SAHKRemoteGestalt", {
-	Text = "Remote Gestalt",
+	Text = "Remote Scanner",
 	Default = "hit, bullet, projectile, hitscan",
 	Placeholder = "hit, bullet, projectile, hitscan",
 })
@@ -9303,11 +9314,12 @@ function SilentAimHK.predict(part)
 	return pos + lead + lift
 end
 
--- Picks the target part every throttle tick. There is no distance cap: every
--- player with a live, visible-to-the-loop character is a candidate, so shots
--- register at any range. The Target Player dropdown can narrow this to a single
--- player; FOV Radius limits the search unless 360 Mode is on; Priority Mode then
--- decides which valid target wins.
+-- Picks the target part every throttle tick. A player is a candidate while their
+-- character is alive and within Target Range -- default 10000 studs, i.e.
+-- effectively unlimited, so shots register at any normal range. The Target
+-- Player dropdown can narrow this to a single player; FOV Radius limits the
+-- search unless 360 Mode is on; Priority Mode then decides which valid target
+-- wins.
 function SilentAimHK.findTarget()
 	local camera = workspace.CurrentCamera
 	local character = getCharacter()
@@ -9321,6 +9333,7 @@ function SilentAimHK.findTarget()
 	-- "All" (default) lets silent aim pick anyone; a specific name restricts it to
 	-- that one player.
 	local targetPlayer = (Options.SAHKTargetPlayer and Options.SAHKTargetPlayer.Value) or "All"
+	local maxDist = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 10000
 
 	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	local bestPart, bestScore = nil, math.huge
@@ -9335,7 +9348,8 @@ function SilentAimHK.findTarget()
 				if otherRoot then
 					local worldDist = (otherRoot.Position - root.Position).Magnitude
 					local part = SilentAimHK.getTargetPart(otherChar)
-					if part and part.Parent and (not wallCheck or SilentAimHK.isVisible(otherPlayer, otherChar)) then
+					if part and part.Parent and worldDist <= maxDist
+						and (not wallCheck or SilentAimHK.isVisible(otherPlayer, otherChar)) then
 						local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
 						local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
 						-- The FOV circle only constrains while 360 Mode is off.
@@ -9588,8 +9602,11 @@ function SilentAimHK.Namecall(original, ...)
 	local targetPos = SilentAimHK.predict(hitPart)
 	if not targetPos then return original(...) end
 
-	local wallBang = (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false
 	local bulletTeleport = (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) or false
+	-- Bullet Teleport drops the shot in beside the target, so it also needs the
+	-- WallBang spoof to punch through anything between the shooter and the
+	-- target; switching on either one therefore enables the wallbang behaviour.
+	local wallBang = bulletTeleport or ((Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false)
 
 	if isRay then
 		local raySelf, origin, direction = ...
@@ -9829,8 +9846,10 @@ function SilentAimHK.sync()
 		end))
 		track("SilentAimHKLoop", RunService.Heartbeat:Connect(function(dt)
 			-- Refresh the WallBang water sample here, off the hook's stack, so the
-			-- intercept itself never triggers another engine call.
-			if Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value then
+			-- intercept itself never triggers another engine call. Bullet Teleport
+			-- also uses the wallbang path, so it needs the same sample.
+			if (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value)
+				or (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) then
 				SilentAimHK.InWater = isInWater()
 			end
 			-- Same idea for the mouse guard: keep the "weapon in hand" sample up to
