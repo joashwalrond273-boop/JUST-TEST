@@ -1754,9 +1754,13 @@ MainRight = PlayerSettingsTabBox:AddTab("SETTINGS", "settings")
 HudsGroup = PlayerSettingsTabBox:AddTab("HUDS", "layout-dashboard")
 
 -- ============================================================================
--- MAIN TAB (COSMETICS / SPECTATE)
+-- MAIN TAB (COSMETICS / CONFIG / SPECTATE)
 -- ============================================================================
-local CosmeticsGroup = Tabs.Main:AddLeftGroupbox("COSMETICS", "crown")
+-- COSMETICS and CONFIG sit side by side in one left tabbox, the same way the
+-- Silent Aim menu pairs its tabs. Globals on purpose: the main chunk is already
+-- at Luau's 200-local register limit.
+CosmeticsTabBox = Tabs.Main:AddLeftTabbox()
+CosmeticsGroup = CosmeticsTabBox:AddTab("COSMETICS", "crown")
 
 CosmeticPresets = {}
 
@@ -1855,10 +1859,9 @@ CosmeticsGroup:AddDropdown("BackWearSelect", {
 	Multi = true,
 })
 
--- CONFIG group: sits in the right column, next to the COSMETICS menu, and
--- holds all of the colour / target controls. Global on purpose: the main
--- chunk is already at Luau's 200-local register limit.
-ConfigGroup = Tabs.Main:AddRightGroupbox("CONFIG", "settings")
+-- CONFIG tab: sits side by side with COSMETICS in the same left tabbox and
+-- holds all of the colour / target controls.
+ConfigGroup = CosmeticsTabBox:AddTab("CONFIG", "settings")
 
 -- Recolour the character's own body (head, torso, arms, legs) independently
 -- of the gear and cosmetics.
@@ -1906,25 +1909,74 @@ ConfigGroup:AddDropdown("WearColorSelect", {
 	Multi = true,
 })
 
-ConfigGroup:AddLabel("Head Wear Color"):AddColorPicker("CosmeticSelectColor", {
+-- The four colour rows are label-addon pairs, so the label object is kept: the
+-- label owns the swatch and hiding it hides the text too. Held on a global
+-- table because the main chunk is at Luau's 200-local register limit.
+CosmeticColorRows = {}
+
+CosmeticColorRows.Head = ConfigGroup:AddLabel("Head Wear Color")
+CosmeticColorRows.Head:AddColorPicker("CosmeticSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Head Wear Color",
 })
 
-ConfigGroup:AddLabel("Body Wear Color"):AddColorPicker("BodyWearSelectColor", {
+CosmeticColorRows.Body = ConfigGroup:AddLabel("Body Wear Color")
+CosmeticColorRows.Body:AddColorPicker("BodyWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Body Wear Color",
 })
 
-ConfigGroup:AddLabel("Pants Wear Color"):AddColorPicker("PantsWearSelectColor", {
+CosmeticColorRows.Pants = ConfigGroup:AddLabel("Pants Wear Color")
+CosmeticColorRows.Pants:AddColorPicker("PantsWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Pants Wear Color",
 })
 
-ConfigGroup:AddLabel("Back Wear Color"):AddColorPicker("BackWearSelectColor", {
+CosmeticColorRows.Back = ConfigGroup:AddLabel("Back Wear Color")
+CosmeticColorRows.Back:AddColorPicker("BackWearSelectColor", {
 	Default = Color3.fromRGB(255, 255, 255),
 	Title = "Back Wear Color",
 })
+
+-- The cosmetic colour rows only make sense while "Color Cosmetics" is on, and
+-- the target dropdown only while "Recolor Equipped Gear" is on.
+updateConfigVisibility = function()
+	local colorOn = (Toggles.CosmeticColorChange and Toggles.CosmeticColorChange.Value) or false
+	local recolorOn = (Toggles.RecolorEquipped and Toggles.RecolorEquipped.Value) or false
+
+	-- Use the library's :SetVisible() so each element's own Holder is updated.
+	local function setVisible(element, visible)
+		if element and element.SetVisible then
+			element:SetVisible(visible and true or false)
+		end
+	end
+
+	setVisible(Options.WearColorSelect, colorOn)
+	setVisible(CosmeticColorRows.Head, colorOn)
+	setVisible(CosmeticColorRows.Body, colorOn)
+	setVisible(CosmeticColorRows.Pants, colorOn)
+	setVisible(CosmeticColorRows.Back, colorOn)
+	setVisible(Options.RecolorEquippedTarget, recolorOn)
+
+	-- A sub-tab measures itself from AbsoluteContentSize, which the layout
+	-- engine only refreshes after the current frame's UI pass, so re-run the
+	-- resize on the next frame to pick up the new height.
+	task.defer(function()
+		if CosmeticsTabBox and CosmeticsTabBox.Resize then
+			CosmeticsTabBox:Resize()
+		end
+	end)
+end
+
+updateConfigVisibility()
+
+if Toggles.CosmeticColorChange then
+	Toggles.CosmeticColorChange:OnChanged(updateConfigVisibility)
+end
+
+if Toggles.RecolorEquipped then
+	Toggles.RecolorEquipped:OnChanged(updateConfigVisibility)
+end
 
 -- Hit Sounds (built here, but the controls live in the MISC group so the
 -- Cosmetics menu stays purely visual).
