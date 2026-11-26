@@ -6655,8 +6655,8 @@ SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
 
 SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
 	Text = "Target Part",
-	Values = { "Random", "Head", "Torso", "HumanoidRootPart" },
-	Default = "Torso",
+	Values = { "Head", "Torso", "HumanoidRootPart", "Random" },
+	Default = "Head",
 })
 
 SilentAimHK.Config:AddCheckbox("SAHKWallBang", {
@@ -9216,7 +9216,7 @@ end
 -- setting. "Random" rolls the Headshot Chance so the aim wanders between the
 -- head and the torso instead of always taking the same one.
 function SilentAimHK.getTargetPart(character)
-	local mode = (Options.SAHKTargetPart and Options.SAHKTargetPart.Value) or "Torso"
+	local mode = (Options.SAHKTargetPart and Options.SAHKTargetPart.Value) or "Head"
 	if mode == "Random" then
 		local chance = (Options.SAHKHeadshotChance and Options.SAHKHeadshotChance.Value) or 100
 		if math.random(1, 100) <= chance then
@@ -9258,15 +9258,19 @@ function SilentAimHK.isVisible(player, character)
 	return visible
 end
 
--- Velocity based prediction. The lead time is how long the shot takes to reach
--- the target (distance / projectile speed) and the lead itself is that time
--- multiplied by the target's own velocity, so the correction grows with both
--- how far the target is and how fast it is moving. PROJECTILE_SPEED is the
--- assumed travel speed of the game's projectiles (lower = leads harder) and
--- MAX_LEAD caps a single shot's lead so the aim can never be dragged far past
--- the target. Both live on the table to stay clear of the local register budget.
+-- Ballistic prediction. The lead time is how long the shot takes to reach the
+-- target (distance / projectile speed). Two corrections are applied with it:
+--   * horizontal -- target velocity * lead time, so a moving target is led.
+--     (the faster the target, the further ahead the aim lands)
+--   * vertical -- the gravity drop over that time (0.5 * g * t^2), aimed above
+--     the target to counter the fall. This is what stops ranged shots landing at
+--     an enemy's feet: the further the target, the higher the aim, and up close
+--     the lift is ~0 so point-blank shots are unaffected.
+-- PROJECTILE_SPEED is the assumed travel speed of the game's projectiles; set it
+-- to match the weapon in use (lower = leads harder and lifts harder). Both
+-- constants live on the table to stay clear of the local register budget.
 SilentAimHK.PROJECTILE_SPEED = 400
-SilentAimHK.MAX_LEAD = 0.3
+SilentAimHK.MAX_LEAD = 0.5
 
 function SilentAimHK.predict(part)
 	if not part or not part.Parent then
@@ -9279,18 +9283,24 @@ function SilentAimHK.predict(part)
 	if not vel then
 		return pos
 	end
-	-- A standing target gets no lead at all, so a still enemy is hit dead centre.
-	if vel.Magnitude < 1 then
-		return pos
-	end
-	-- Distance from the shooter, so the lead matches this shot's travel time.
+	-- Distance from the shooter, so the corrections match this shot's travel time.
 	local character = getCharacter()
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local origin = root and root.Position or pos
 	local dist = (pos - origin).Magnitude
-	local lead = math.clamp(dist / SilentAimHK.PROJECTILE_SPEED, 0, SilentAimHK.MAX_LEAD)
-	-- Faster target -> larger velocity -> further ahead the aim lands.
-	return pos + (vel * lead)
+
+	-- Travel time, capped so a very far / fast shot cannot drag the aim far past
+	-- the target.
+	local t = math.clamp(dist / SilentAimHK.PROJECTILE_SPEED, 0, SilentAimHK.MAX_LEAD)
+
+	-- Horizontal lead: only for a moving target, so a standing enemy is hit dead
+	-- centre.
+	local lead = (vel.Magnitude >= 1) and (vel * t) or Vector3.zero
+	-- Vertical drop compensation: always applied, so even a still target at range
+	-- is hit on the head instead of the feet.
+	local lift = Vector3.new(0, 0.5 * (workspace.Gravity or 196.2) * t * t, 0)
+
+	return pos + lead + lift
 end
 
 -- Picks the target part every throttle tick. There is no distance cap: every
