@@ -56,37 +56,16 @@ end
 local ThemeManager = loadObsidian("addons/ThemeManager.lua")
 local SaveManager = loadObsidian("addons/SaveManager.lua")
 
--- Ensure Lucide Icons are properly loaded for tabs & groupboxes (cached locally like Obsidian)
+-- Ensure Lucide Icons are properly loaded for tabs & groupboxes
 pcall(function()
 	local lucideModule = nil
-	local cachePath = "Obsidian/lucide.lua"
-	local okCached, cachedSource = pcall(readfile, cachePath)
-	if okCached and type(cachedSource) == "string" and cachedSource ~= "" then
-		pcall(function()
-			lucideModule = loadstring(cachedSource)()
-		end)
-	end
+	pcall(function()
+		lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua"))()
+	end)
 	if not lucideModule then
-		local fetched = nil
 		pcall(function()
-			fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua")
+			lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua"))()
 		end)
-		if not fetched or fetched == "" then
-			pcall(function()
-				fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua")
-			end)
-		end
-		if fetched and fetched ~= "" then
-			pcall(function()
-				lucideModule = loadstring(fetched)()
-			end)
-			if lucideModule and writefile then
-				pcall(function()
-					if makefolder then pcall(makefolder, "Obsidian") end
-					writefile(cachePath, fetched)
-				end)
-			end
-		end
 	end
 	if lucideModule and Library.SetIconModule then
 		Library:SetIconModule(lucideModule)
@@ -115,17 +94,11 @@ Library.ShowToggleFrameInKeybinds = true
 
 -- Helpers
 local function waitForChild(parent, name, timeout)
-	if not parent then return nil end
-	local child = parent:FindFirstChild(name)
-	if child then return child end
 	timeout = timeout or 10
-	local ok, waited = pcall(parent.WaitForChild, parent, name, timeout)
-	if ok then
-		return waited
-	end
 	local start = tick()
+	local child = parent:FindFirstChild(name)
 	while not child and tick() - start < timeout do
-		task.wait(0.1)
+		task.wait()
 		child = parent:FindFirstChild(name)
 	end
 	return child
@@ -295,9 +268,7 @@ local function setBehaviorDisabled(instance, disabled)
 		return false
 	end
 	local ok = pcall(function()
-		if instance.Disabled ~= disabled then
-			instance.Disabled = disabled
-		end
+		instance.Disabled = disabled
 	end)
 	return ok
 end
@@ -320,7 +291,7 @@ local function getKeyedRemotes()
 		return keyed
 	end
 	pcall(function()
-		for _, fn in next, getgc(false) do
+		for _, fn in next, getgc(true) do
 			if typeof(fn) == "function" and islclosure(fn) then
 				local constants = debug.getconstants(fn)
 				if rawget(constants, 1) == "Destroy" and rawget(constants, 2) == "new" then
@@ -1677,12 +1648,11 @@ do
 				if LocalPlayer.Character then
 					hookAtlanteanSlotChar(LocalPlayer.Character)
 				end
-				track("AtlanteanSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-					hookAtlanteanSlotChar(char)
-					task.delay(0.2, updateAtlanteanSlotSystemState)
-				end))
+				track("AtlanteanSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAtlanteanSlotChar))
 
-				track("AtlanteanSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAtlanteanSlotSystemState))
+				track("AtlanteanSlotSystem_Poll", RunService.Heartbeat:Connect(function()
+					updateAtlanteanSlotSystemState()
+				end))
 
 				updateAtlanteanSlotSystemState()
 
@@ -2033,15 +2003,14 @@ end
 
 -- Hit effect: a short-lived cosmetic burst where the melee hit landed.
 -- Declared as a global on purpose (the main chunk is at Luau's 200-local limit).
-Xeno_PlayHitEffect = function(hitArg)
+Xeno_PlayHitEffect = function(hitArgs)
 	pcall(function()
 		local selected = Options.HitEffectSelect and Options.HitEffectSelect.Value
 		if not selected or selected == "None" then return end
 
 		-- Cap the spawn rate so a fast kill-aura can't pile up effect folders.
 		local now = tick()
-		local minInterval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.18 or 0.08
-		if now - (XenoHitEffectLast or 0) < minInterval then return end
+		if now - (XenoHitEffectLast or 0) < 0.08 then return end
 		XenoHitEffectLast = now
 
 		local character = getCharacter()
@@ -2053,7 +2022,7 @@ Xeno_PlayHitEffect = function(hitArg)
 		-- body part so effects like Fire can cling to it.
 		local position
 		local targetRoot
-		local arg = typeof(hitArg) == "table" and hitArg[2] or hitArg
+		local arg = hitArgs and hitArgs[2]
 		if typeof(arg) == "Instance" then
 			local char = arg
 			if arg:IsA("Player") then
@@ -2358,7 +2327,7 @@ Xeno_PlayHitEffect = function(hitArg)
 			flash.Brightness = 3
 			flash.Parent = anchor
 
-			-- Ground ring that expands outwards from the impact point using native TweenService.
+			-- Ground ring that expands outwards from the impact point.
 			local ring = Instance.new("Part")
 			ring.Anchored = true
 			ring.CanCollide = false
@@ -2373,11 +2342,16 @@ Xeno_PlayHitEffect = function(hitArg)
 			ring.Parent = fxFolder
 			table.insert(extras, ring)
 
-			game:GetService("TweenService"):Create(
-				ring,
-				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Size = Vector3.new(0.15, 13, 13), Transparency = 1 }
-			):Play()
+			task.spawn(function()
+				local grow = 0
+				while grow < 1 and ring.Parent do
+					grow += 0.06
+					local diameter = 1 + grow * 12
+					ring.Size = Vector3.new(0.15, diameter, diameter)
+					ring.Transparency = math.clamp(grow, 0, 1)
+					task.wait(0.02)
+				end
+			end)
 
 			addEmitter(anchor, {
 				Texture = "rbxasset://textures/particles/smoke_main.dds",
@@ -4385,16 +4359,12 @@ do
 		refreshStatsLabel()
 		statsRunning = true
 
-		local lastShownSecond = -1
-		track("SessionStats_Loop", RunService.Heartbeat:Connect(function()
+		track("SessionStats_Loop", RunService.RenderStepped:Connect(function()
 			if not statsRunning or not statsLabel then return end
 
 			local now = tick()
-			if now - statsLastLabel < 0.5 then return end
-			statsLastLabel = now
-			local sec = math.floor(now - sessionStart)
-			if sec ~= lastShownSecond then
-				lastShownSecond = sec
+			if now - statsLastLabel >= 0.25 then
+				statsLastLabel = now
 				refreshStatsLabel()
 			end
 		end))
@@ -4505,8 +4475,10 @@ do
 			perfFrames = 0
 			perfLastUpdate = now
 
-			local okPing, rawPing = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
-			local ping = (okPing and type(rawPing) == "number") and math.floor(rawPing * 1000 + 0.5) or 0
+			local ping = 0
+			pcall(function()
+				ping = math.floor(LocalPlayer:GetNetworkPing() * 1000 + 0.5)
+			end)
 
 			perfLabel.Text = string.format("PING %dms   FPS %d", ping, fps)
 		end))
@@ -4603,14 +4575,12 @@ do
 
 	local function watchPlayer(plr)
 		if not plr or not isAdmin(plr) then return end
-		local key = "AdminCham_Char_" .. tostring(plr.UserId or plr.Name)
-		disconnect(key)
-		track(key, plr.CharacterAdded:Connect(function(character)
+		plr.CharacterAdded:Connect(function(character)
 			if adminChamActive then
 				task.wait(0.1)
 				applyCham(character)
 			end
-		end))
+		end)
 		if plr.Character and adminChamActive then
 			applyCham(plr.Character)
 		end
@@ -4619,10 +4589,9 @@ do
 	for _, plr in ipairs(TSG_PlayerList) do
 		watchPlayer(plr)
 	end
-	track("AdminCham_PlayerAdded", Players.PlayerAdded:Connect(watchPlayer))
-	track("AdminCham_PlayerRemoving", Players.PlayerRemoving:Connect(function(plr)
+	Players.PlayerAdded:Connect(watchPlayer)
+	Players.PlayerRemoving:Connect(function(plr)
 		if isAdmin(plr) then
-			disconnect("AdminCham_Char_" .. tostring(plr.UserId or plr.Name))
 			removeCham(plr.Character)
 			Library:Notify({
 				Title = "ADMIN LEFT",
@@ -4630,7 +4599,7 @@ do
 				Time = 5,
 			})
 		end
-	end))
+	end)
 
 	Toggles.AdminCham:OnChanged(function()
 		adminChamActive = Toggles.AdminCham.Value
@@ -4861,7 +4830,7 @@ Toggles.InfiniteStamina:OnChanged(function()
 		local lastApply = 0
 		track("InfiniteStaminaPoll", RunService.Heartbeat:Connect(function()
 			local now = os.clock()
-			if now - lastApply < 0.5 then return end
+			if now - lastApply < 0.25 then return end
 			lastApply = now
 			if Toggles.InfiniteStamina and Toggles.InfiniteStamina.Value then
 				applyCharacterModuleToggles()
@@ -5083,20 +5052,17 @@ function TSG_BossHitNamecall(previous, ...)
 			or rawequal(self, TSG.MeleeAI)
 			or rawequal(self, TSG.MeleeAnimalRemote)
 		if isMeleeHit then
-			local soundOn = Toggles.HitSound and Toggles.HitSound.Value
-			local effectSelected = Options.HitEffectSelect and Options.HitEffectSelect.Value
-			local effectOn = effectSelected ~= nil and effectSelected ~= "None"
-			local hitTarget = effectOn and select(3, ...) or nil
-			if soundOn or effectOn then
-				task.defer(function()
-					if soundOn and Xeno_PlayHitSound then
-						pcall(Xeno_PlayHitSound)
+			local hitArgs = table.pack(select(2, ...))
+			task.defer(function()
+				pcall(function()
+					if Xeno_PlayHitSound then
+						Xeno_PlayHitSound()
 					end
-					if effectOn and Xeno_PlayHitEffect then
-						pcall(Xeno_PlayHitEffect, hitTarget)
+					if Xeno_PlayHitEffect then
+						Xeno_PlayHitEffect(hitArgs)
 					end
 				end)
-			end
+			end)
 		end
 	end
 
@@ -5210,7 +5176,7 @@ local function trackDroppedItem(item)
 	end
 end
 
-track("DroppedItemAdded", CollectionService:GetInstanceAddedSignal("DROPPED_ITEM"):Connect(trackDroppedItem))
+CollectionService:GetInstanceAddedSignal("DROPPED_ITEM"):Connect(trackDroppedItem)
 for _, item in ipairs(CollectionService:GetTagged("DROPPED_ITEM")) do
 	trackDroppedItem(item)
 end
@@ -5236,7 +5202,7 @@ local function tryAutoPickup()
 	local rootPos = getFeetPosition() or root.Position
 	local candidateItems = {}
 
-	for item in pairs(droppedItemSpawnTimes) do
+	for _, item in ipairs(CollectionService:GetTagged("DROPPED_ITEM")) do
 		if item and item.Parent and canAutoPickup(item, isVacuum) then
 			local dist = (item.Position - rootPos).Magnitude
 			if dist <= maxRange then
@@ -5364,15 +5330,12 @@ local function tryEatCustom()
 		lastEatCustom = tick()
 		local selectedFood = Options and Options.AutoEatFood and Options.AutoEatFood.Value
 		local foodId = FoodIdMap[selectedFood] or 210
-		local eatRemote = TSG.EatRemote
-		if not eatRemote or not eatRemote.Parent then
-			eatRemote = interactionsFolder and interactionsFolder:FindFirstChild("eat")
-				or resolvePath(ReplicatedStorage, "remoteInterface", "interactions", "eat")
-			TSG.EatRemote = eatRemote
-		end
-		if eatRemote then
-			pcall(eatRemote.FireServer, eatRemote, foodId)
-		end
+		pcall(function()
+			local args = {
+				foodId
+			}
+			game:GetService("ReplicatedStorage"):WaitForChild("remoteInterface"):WaitForChild("interactions"):WaitForChild("eat"):FireServer(unpack(args))
+		end)
 	end
 end
 
@@ -5432,10 +5395,7 @@ do
 	if LocalPlayer.Character then
 		hookAutoEatSlotChar(LocalPlayer.Character)
 	end
-	track("AutoEatSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-		hookAutoEatSlotChar(char)
-		task.delay(0.2, updateAutoEatSlotState)
-	end))
+	track("AutoEatSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAutoEatSlotChar))
 
 	if Options.AutoEatSlot then
 		Options.AutoEatSlot:OnChanged(function()
@@ -5447,7 +5407,7 @@ do
 		Toggles.AutoEatSlotSystem:OnChanged(function()
 			disconnect("AutoEatSlot_Poll")
 			if Toggles.AutoEatSlotSystem.Value then
-				track("AutoEatSlot_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAutoEatSlotState))
+				track("AutoEatSlot_Poll", RunService.Heartbeat:Connect(updateAutoEatSlotState))
 				updateAutoEatSlotState()
 				Library:Notify({ Title = "Auto Heal Slot System", Description = "Enabled", Time = 2 })
 			else
@@ -6354,38 +6314,38 @@ function BindShieldAnimRespawn(character)
 			StopShieldAnimation()
 		end)
 	end
-	-- Watch the held tool so a swing can hide the pose, and inherit the no-swing-while-blocking state.
+	-- Watch the held tool so a swing can hide the pose.
 	for _, child in ipairs(character:GetChildren()) do
 		BindSwingAnimStop(child)
 	end
-	disconnect("ShieldAnim_CharChildAdded")
-	track("ShieldAnim_CharChildAdded", character.ChildAdded:Connect(function(child)
-		BindSwingAnimStop(child)
+	character.ChildAdded:Connect(BindSwingAnimStop)
+	-- A freshly equipped tool must inherit the no-swing-while-blocking state.
+	character.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then
 			task.defer(ApplySwingBlock)
 		end
-	end))
+	end)
 	ApplySwingBlock()
 end
 
 if LocalPlayer.Character then
 	task.spawn(BindShieldAnimRespawn, LocalPlayer.Character)
 end
-track("ShieldAnim_CharacterAdded", LocalPlayer.CharacterAdded:Connect(function(character)
+LocalPlayer.CharacterAdded:Connect(function(character)
 	task.spawn(BindShieldAnimRespawn, character)
 	task.delay(0.5, UpdateShieldAnimation)
-end))
+end)
 
 -- Re-evaluate the pose whenever the held tool changes (sword equipped/unequipped).
-track("ShieldAnim_EquippedTool", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(UpdateShieldAnimation))
+LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(UpdateShieldAnimation)
 
 -- Manual blocking (right-click / shield button) flips this attribute, so mirror
 -- it into the no-swing-while-blocking state too.
-track("ShieldAnim_IsShielding", LocalPlayer:GetAttributeChangedSignal("IsShieldingClient"):Connect(function()
+LocalPlayer:GetAttributeChangedSignal("IsShieldingClient"):Connect(function()
 	if ApplySwingBlock then
 		ApplySwingBlock()
 	end
-end))
+end)
 
 updateImmortalModeVisibility = function()
 	local isImmortal = (Toggles.ImmortalMode and Toggles.ImmortalMode.Value) or false
@@ -6695,17 +6655,8 @@ SilentAimHK.Main:AddCheckbox("SAHKWallCheck", {
 
 SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
 	Text = "Target Part",
-	Values = { "Random", "Head", "HumanoidRootPart" },
-	Default = "Head",
-})
-
-SilentAimHK.Main:AddSlider("SAHKTargetRange", {
-	Text = "Target Range",
-	Default = 500,
-	Min = 5,
-	Max = 1000,
-	Rounding = 0,
-	Compact = true,
+	Values = { "Random", "Head", "Torso", "HumanoidRootPart" },
+	Default = "Torso",
 })
 
 SilentAimHK.Config:AddCheckbox("SAHKWallBang", {
@@ -6759,10 +6710,7 @@ SilentAimHK.Config:AddSlider("SAHKResponsiveness", {
 SilentAimHK.Config:AddDropdown("SAHKAimMethods", {
 	Text = "Aim Methods",
 	Values = { "Raycast", "FireServer", "InvokeServer", "Mouse.Hit" },
-	-- Raycast alone only spoofs the game's own ray, which is what draws the hit.
-	-- The damage itself is applied by the shot remote the server validates, so the
-	-- remote methods must be on too or ranged hits land on screen but deal none.
-	Default = { "Raycast", "FireServer", "InvokeServer" },
+	Default = { "Raycast" },
 	Multi = true,
 })
 
@@ -6839,41 +6787,30 @@ CombatReach:AddDropdown("ReachIgnore", {
 	AllowNull = true,
 })
 
-TSG_MOVEMENT_ANIM_IDS = {
-	"507766388", "507777826", "507767714",
-	"507765000", "507767968", "507765644",
-	"507784064", "180426354", "180415668",
-	"180419271", "180435571",
-}
-TSG_SwingAnimCache = {}
-
 local function isSwingAnimation(trackObj)
 	local anim = trackObj.Animation
 	if not anim then return false end
 	local id = anim.AnimationId
-	local rawName = anim.Name
-	local cacheKey = id .. "|" .. rawName
-	local cached = TSG_SwingAnimCache[cacheKey]
-	if cached ~= nil then
-		return cached
+	local name = anim.Name:lower()
+
+	if name:find("idle") or name:find("walk") or name:find("run") or name:find("jump") or
+	   name:find("fall") or name:find("swim") or name:find("climb") or name:find("strafe") then
+		return false
 	end
 
-	local name = rawName:lower()
-	local isSwing = true
-	if name:find("idle", 1, true) or name:find("walk", 1, true) or name:find("run", 1, true) or name:find("jump", 1, true) or
-	   name:find("fall", 1, true) or name:find("swim", 1, true) or name:find("climb", 1, true) or name:find("strafe", 1, true) then
-		isSwing = false
-	else
-		for i = 1, #TSG_MOVEMENT_ANIM_IDS do
-			if id:find(TSG_MOVEMENT_ANIM_IDS[i], 1, true) then
-				isSwing = false
-				break
-			end
+	local movementIds = {
+		["507766388"] = true, ["507777826"] = true, ["507767714"] = true,
+		["507765000"] = true, ["507767968"] = true, ["507765644"] = true,
+		["507784064"] = true, ["180426354"] = true, ["180415668"] = true,
+		["180419271"] = true, ["180435571"] = true
+	}
+	for mId in pairs(movementIds) do
+		if id:find(mId) then
+			return false
 		end
 	end
 
-	TSG_SwingAnimCache[cacheKey] = isSwing
-	return isSwing
+	return true
 end
 
 local isShielding = false
@@ -7117,13 +7054,8 @@ do
 		refreshShieldHud()
 		shieldHudRunning = true
 
-		local lastShieldHudUpdate = 0
-		track("ShieldHud_Loop", RunService.Heartbeat:Connect(function()
+		track("ShieldHud_Loop", RunService.RenderStepped:Connect(function()
 			if not shieldHudRunning or not shieldHudLabel then return end
-			local now = os.clock()
-			local interval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.1 or 0.05
-			if now - lastShieldHudUpdate < interval then return end
-			lastShieldHudUpdate = now
 			refreshShieldHud()
 		end))
 
@@ -7144,11 +7076,7 @@ Toggles.ShieldNotifier:OnChanged(function()
 		return
 	end
 
-	local lastCheck = 0
 	track("ShieldNotifier", RunService.Heartbeat:Connect(function()
-		local nowClock = os.clock()
-		if nowClock - lastCheck < 0.1 then return end
-		lastCheck = nowClock
 		local now = tick()
 		local broken = now < (ShieldParryBreakUntil or 0) or now < (ShieldAnimBreakUntil or 0)
 		if broken and not wasBroken then
@@ -7422,12 +7350,11 @@ Toggles.Advance:OnChanged(function()
 		if LocalPlayer.Character then
 			hookAdvanceChar(LocalPlayer.Character)
 		end
-		track("AdvanceSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-			hookAdvanceChar(char)
-			task.delay(0.2, updateAdvanceState)
-		end))
+		track("AdvanceSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAdvanceChar))
 
-		track("AdvanceSlotCheck", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAdvanceState))
+		track("AdvanceSlotCheck", RunService.Heartbeat:Connect(function()
+			updateAdvanceState()
+		end))
 
 		updateAdvanceState()
 	else
@@ -7473,7 +7400,6 @@ local function getBestMeleeWeapon()
 end
 
 local lastKillAuraHit = 0
-TSG_LastKillAuraScan = 0
 
 local function attackNPC(slot, target)
 	if not target then return end
@@ -7506,10 +7432,8 @@ local function attackNPC(slot, target)
 end
 
 local function killAuraLoop()
-	local now = tick()
 	local delayVal = Options.KillAuraSpeed and Options.KillAuraSpeed.Value or 0.2
-	if now - lastKillAuraHit < delayVal or now - TSG_LastKillAuraScan < 0.08 or not isAlive() then return end
-	TSG_LastKillAuraScan = now
+	if not isAlive() or tick() - lastKillAuraHit < delayVal then return end
 	local root = getRootPart()
 	if not root then return end
 
@@ -7521,9 +7445,13 @@ local function killAuraLoop()
 
 	local maxAngle = (Options.KillAuraAngle and Options.KillAuraAngle.Value) or 90
 	local coneThreshold = math.cos(math.rad(maxAngle / 2))
-	local lookVec = root.CFrame.LookVector
-	local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
-	local forward = flatLook.Magnitude > 0 and flatLook.Unit or lookVec
+	local forward = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+
+	local function passesAngleCheck(targetPos)
+		local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
+		if dir.Magnitude <= 0 then return true end
+		return forward:Dot(dir.Unit) >= coneThreshold
+	end
 
 	local targetSetting = Options.KillAuraTarget and Options.KillAuraTarget.Value or "All"
 	local priority = (Options.KillAuraPriority and Options.KillAuraPriority.Value) or "Normal"
@@ -7545,41 +7473,36 @@ local function killAuraLoop()
 	-- Scan Players
 	for _, otherPlayer in ipairs(TSG_PlayerList) do
 		if otherPlayer ~= LocalPlayer and otherPlayer.Character then
-			if targetSetting == "All" or otherPlayer.Name == targetSetting then
-				local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
-				local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
-				if otherHum and otherHum.Health > 0 and otherRoot then
-					local targetPos = otherRoot.Position
-					local d = (targetPos - pos).Magnitude
-					if d < range then
-						local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
-						local inAngle = dir.Magnitude <= 0 or forward:Dot(dir.Unit) >= coneThreshold
-						if inAngle then
-							if useLowestHP then
-								if otherHum.Health < lowestHealth then
-									lowestHealth = otherHum.Health
-									lowestHPTarget = otherPlayer.Character
-								end
-							elseif useHighestHP then
-								if otherHum.Health > highestHealth then
-									highestHealth = otherHum.Health
-									highestHPTarget = otherPlayer.Character
-								end
-							elseif useCrosshair then
-								if crosshairForward then
-									local cDir = targetPos - crosshairCamPos
-									if cDir.Magnitude > 0 then
-										local dot = crosshairForward:Dot(cDir.Unit)
-										if dot > bestCrosshairDot then
-											bestCrosshairDot = dot
-											crosshairTarget = otherPlayer.Character
-										end
+			local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+			local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
+			if otherHum and otherHum.Health > 0 and otherRoot then
+				if targetSetting == "All" or otherPlayer.Name == targetSetting then
+					local d = (otherRoot.Position - pos).Magnitude
+					if d < range and passesAngleCheck(otherRoot.Position) then
+						if useLowestHP then
+							if otherHum.Health < lowestHealth then
+								lowestHealth = otherHum.Health
+								lowestHPTarget = otherPlayer.Character
+							end
+						elseif useHighestHP then
+							if otherHum.Health > highestHealth then
+								highestHealth = otherHum.Health
+								highestHPTarget = otherPlayer.Character
+							end
+						elseif useCrosshair then
+							if crosshairForward then
+								local dir = otherRoot.Position - crosshairCamPos
+								if dir.Magnitude > 0 then
+									local dot = crosshairForward:Dot(dir.Unit)
+									if dot > bestCrosshairDot then
+										bestCrosshairDot = dot
+										crosshairTarget = otherPlayer.Character
 									end
 								end
-							elseif d < nearestDist then
-								nearestDist = d
-								nearestTarget = otherPlayer.Character
 							end
+						elseif d < nearestDist then
+							nearestDist = d
+							nearestTarget = otherPlayer.Character
 						end
 					end
 				end
@@ -7694,10 +7617,6 @@ Toggles.AutoSwing:OnChanged(function()
 end)
 
 
-TSG_WHITE_BRICKCOLOR = BrickColor.new("White")
-TSG_TeammateCache = setmetatable({}, { __mode = "k" })
-TSG_MyKingdomCache = { t = 0, val = nil }
-
 function isTeammate(otherPlayer)
 	if not otherPlayer or otherPlayer == LocalPlayer then
 		return true
@@ -7706,66 +7625,42 @@ function isTeammate(otherPlayer)
 	if LocalPlayer.Team and otherPlayer.Team and LocalPlayer.Team == otherPlayer.Team then
 		return true
 	end
-	if LocalPlayer.TeamColor and otherPlayer.TeamColor and LocalPlayer.TeamColor == otherPlayer.TeamColor and LocalPlayer.TeamColor ~= TSG_WHITE_BRICKCOLOR then
+	if LocalPlayer.TeamColor and otherPlayer.TeamColor and LocalPlayer.TeamColor == otherPlayer.TeamColor and LocalPlayer.TeamColor ~= BrickColor.new("White") then
 		return true
 	end
 
-	local now = os.clock()
-	local cached = TSG_TeammateCache[otherPlayer]
-	if cached and now - cached.t < 0.35 then
-		return cached.v
-	end
-
-	local result = false
-	if TSG.ClientData and TSG.ClientData.getKingdom then
-		local myKingdom
-		if now - TSG_MyKingdomCache.t < 0.5 then
-			myKingdom = TSG_MyKingdomCache.val
-		else
-			local ok, k = pcall(TSG.ClientData.getKingdom)
-			myKingdom = ok and k or nil
-			TSG_MyKingdomCache.t = now
-			TSG_MyKingdomCache.val = myKingdom
-		end
-		if myKingdom then
+	local success, kingdomMatch = pcall(function()
+		if TSG.ClientData and TSG.ClientData.getKingdom then
+			local myKingdom = TSG.ClientData.getKingdom()
 			local otherKingdom = otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Team")
-			if otherKingdom and myKingdom == otherKingdom then
-				result = true
+			if myKingdom and otherKingdom and myKingdom == otherKingdom then
+				return true
 			end
 		end
+		return false
+	end)
+	if success and kingdomMatch then
+		return true
 	end
 
-	if not result then
-		local myClan = LocalPlayer:GetAttribute("Clan") or LocalPlayer:GetAttribute("Kingdom") or LocalPlayer:GetAttribute("Tribe") or LocalPlayer:GetAttribute("Team")
-		local theirClan = otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Tribe") or otherPlayer:GetAttribute("Team")
-		if myClan and theirClan and myClan ~= "" and myClan == theirClan then
-			result = true
+	local myClan = LocalPlayer:GetAttribute("Clan") or LocalPlayer:GetAttribute("Kingdom") or LocalPlayer:GetAttribute("Tribe") or LocalPlayer:GetAttribute("Team")
+	local theirClan = otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Tribe") or otherPlayer:GetAttribute("Team")
+	if myClan and theirClan and myClan ~= "" and myClan == theirClan then
+		return true
+	end
+
+	if LocalPlayer.Character and otherPlayer.Character then
+		local myCharClan = LocalPlayer.Character:GetAttribute("Clan") or LocalPlayer.Character:GetAttribute("Kingdom") or LocalPlayer.Character:GetAttribute("Tribe")
+		local theirCharClan = otherPlayer.Character:GetAttribute("Clan") or otherPlayer.Character:GetAttribute("Kingdom") or otherPlayer.Character:GetAttribute("Tribe")
+		if myCharClan and theirCharClan and myCharClan ~= "" and myCharClan == theirCharClan then
+			return true
 		end
 	end
 
-	if not result then
-		local myChar = LocalPlayer.Character
-		local theirChar = otherPlayer.Character
-		if myChar and theirChar then
-			local myCharClan = myChar:GetAttribute("Clan") or myChar:GetAttribute("Kingdom") or myChar:GetAttribute("Tribe")
-			local theirCharClan = theirChar:GetAttribute("Clan") or theirChar:GetAttribute("Kingdom") or theirChar:GetAttribute("Tribe")
-			if myCharClan and theirCharClan and myCharClan ~= "" and myCharClan == theirCharClan then
-				result = true
-			end
-		end
-	end
-
-	if cached then
-		cached.t = now
-		cached.v = result
-	else
-		TSG_TeammateCache[otherPlayer] = { t = now, v = result }
-	end
-	return result
+	return false
 end
 
 local lastSmartSwing = 0
-TSG_LastSmartSwingScan = 0
 Toggles.SmartSwing:OnChanged(function()
 	disconnect("SmartSwing")
 	if updateAutoSwingSliderVisibility then
@@ -7773,15 +7668,13 @@ Toggles.SmartSwing:OnChanged(function()
 	end
 	if Toggles.SmartSwing.Value then
 		track("SmartSwing", RunService.Heartbeat:Connect(function()
-			local now = tick()
-			local speedVal = Options.AutoSwingSpeed and Options.AutoSwingSpeed.Value or 10
-			local delay = 1 / math.max(0.1, speedVal)
-			if now - lastSmartSwing < delay or now - TSG_LastSmartSwingScan < 0.08 then return end
-			TSG_LastSmartSwingScan = now
-
 			if not isAlive() then return end
 			local root = getRootPart()
 			if not root then return end
+
+			local speedVal = Options.AutoSwingSpeed and Options.AutoSwingSpeed.Value or 10
+			local delay = 1 / math.max(0.1, speedVal)
+			if tick() - lastSmartSwing < delay then return end
 
 			local pos = root.Position
 
@@ -8076,41 +7969,6 @@ Toggles.Camlock:OnChanged(function()
 			return camlockWaterCache
 		end
 
-		local function isExcludedTeam(p, ignoreAlly, excludedTeams)
-			if not ignoreAlly then return false end
-			if not p or not p.Team then return false end
-			local teamName = p.Team.Name
-			if not teamName then return false end
-			if typeof(excludedTeams) == "table" then
-				return excludedTeams[teamName] == true
-			end
-			return false
-		end
-
-		local function isSameTeamOnly(p)
-			if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team then
-				return true
-			end
-			if LocalPlayer.TeamColor and p.TeamColor and LocalPlayer.TeamColor == p.TeamColor and LocalPlayer.TeamColor ~= TSG_WHITE_BRICKCOLOR then
-				return true
-			end
-			return false
-		end
-
-		local function camlockTargetValid(p, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
-			if not p or p == LocalPlayer then return false end
-			if isCamlockBlacklisted(p) then return false end
-			local c = p.Character
-			if not c then return false end
-			if ignoreTeam and isSameTeamOnly(p) then return false end
-			if isExcludedTeam(p, ignoreAlly, excludedTeams) then return false end
-			if targetSetting ~= "All" and p.Name ~= targetSetting then return false end
-			local otherRoot = c:FindFirstChild("HumanoidRootPart")
-			local otherHum = c:FindFirstChildOfClass("Humanoid")
-			if not (otherRoot and otherHum and otherHum.Health > 0) then return false end
-			return true, otherRoot
-		end
-
 		track("Camlock", RunService.RenderStepped:Connect(function(dt)
 			if not isAlive() then return end
 			local root = getRootPart()
@@ -8151,9 +8009,48 @@ Toggles.Camlock:OnChanged(function()
 			local ignoreAlly = Toggles.CamlockIgnoreAlly and Toggles.CamlockIgnoreAlly.Value
 			local excludedTeams = Options.CamlockIgnoreTeams and Options.CamlockIgnoreTeams.Value or {}
 
+			local function isExcludedTeam(p)
+				if not ignoreAlly then return false end
+				if not p or not p.Team then return false end
+				local teamName = p.Team.Name
+				if not teamName then return false end
+				if typeof(excludedTeams) == "table" then
+					for name, selected in pairs(excludedTeams) do
+						if selected == true and name == teamName then
+							return true
+						end
+					end
+				end
+				return false
+			end
+
+			local function isSameTeamOnly(p)
+				if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team then
+					return true
+				end
+				if LocalPlayer.TeamColor and p.TeamColor and LocalPlayer.TeamColor == p.TeamColor and LocalPlayer.TeamColor ~= BrickColor.new("White") then
+					return true
+				end
+				return false
+			end
+
+			local function camlockTargetValid(p)
+				if not p or p == LocalPlayer then return false end
+				if isCamlockBlacklisted(p) then return false end
+				local c = p.Character
+				if not c then return false end
+				if ignoreTeam and isSameTeamOnly(p) then return false end
+				if isExcludedTeam(p) then return false end
+				if targetSetting ~= "All" and p.Name ~= targetSetting then return false end
+				local otherRoot = c:FindFirstChild("HumanoidRootPart")
+				local otherHum = c:FindFirstChildOfClass("Humanoid")
+				if not (otherRoot and otherHum and otherHum.Health > 0) then return false end
+				return true, otherRoot
+			end
+
 			-- Drop a cached target that died, left, or walked out of range.
 			if camlockTarget then
-				local ok, otherRoot = camlockTargetValid(camlockTarget, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
+				local ok, otherRoot = camlockTargetValid(camlockTarget)
 				if not ok or (otherRoot.Position - myPos).Magnitude > maxDist then
 					camlockTarget = nil
 				end
@@ -8165,21 +8062,23 @@ Toggles.Camlock:OnChanged(function()
 			if not camlockTarget or camlockNow >= camlockNextPick then
 				camlockNextPick = camlockNow + 0.1
 				local bestPlayer, bestDist, bestHealth, bestScore = nil, math.huge, nil, -math.huge
-				local cam = (camlockPriority == "Closest to Crosshair") and workspace.CurrentCamera or nil
 				for _, otherPlayer in ipairs(camlockPlayers) do
-					local ok, otherRoot = camlockTargetValid(otherPlayer, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
+					local ok, otherRoot = camlockTargetValid(otherPlayer)
 					if ok then
 						local dist = (otherRoot.Position - myPos).Magnitude
 						if dist <= maxDist then
 							if camlockPriority == "Lowest HP Kill" or camlockPriority == "Highest HP Kill" then
-								local otherHum = otherPlayer.Character and otherPlayer.Character:FindFirstChildOfClass("Humanoid")
-								local hp = otherHum and otherHum.Health or math.huge
+								local hum = otherPlayer.Character and otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+								local hp = hum and hum.Health or math.huge
 								if bestPlayer == nil
 									or (camlockPriority == "Lowest HP Kill" and hp < bestHealth)
 									or (camlockPriority == "Highest HP Kill" and hp > bestHealth) then
 									bestPlayer, bestHealth = otherPlayer, hp
 								end
 							elseif camlockPriority == "Closest to Crosshair" then
+								-- Highest dot product with the camera's look vector
+								-- means the player is nearest the screen centre.
+								local cam = workspace.CurrentCamera
 								if cam then
 									local toTarget = otherRoot.Position - cam.CFrame.Position
 									if toTarget.Magnitude > 0.001 then
@@ -8209,7 +8108,7 @@ Toggles.Camlock:OnChanged(function()
 				local outlineTargetSetting = (Options.OutlineTarget and Options.OutlineTarget.Value) or "All"
 				for _, otherPlayer in ipairs(camlockPlayers) do
 					if otherPlayer ~= LocalPlayer and otherPlayer.Character then
-						if (not ignoreTeam or not isSameTeamOnly(otherPlayer)) and not isExcludedTeam(otherPlayer, ignoreAlly, excludedTeams) then
+						if (not ignoreTeam or not isSameTeamOnly(otherPlayer)) and not isExcludedTeam(otherPlayer) then
 							local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
 							local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
 							if otherRoot and otherHum and otherHum.Health > 0 then
@@ -8235,17 +8134,21 @@ Toggles.Camlock:OnChanged(function()
 											otherPos.Z + pushDir.Z * minOutlineStuds
 										)
 
-										local vel = root.AssemblyLinearVelocity
-										if vel then
-											local moveTowards = vel.X * (-pushDir.X) + vel.Z * (-pushDir.Z)
-											if moveTowards > 0 then
-												root.AssemblyLinearVelocity = Vector3.new(
-													vel.X - (-pushDir.X * moveTowards),
-													vel.Y,
-													vel.Z - (-pushDir.Z * moveTowards)
-												)
+										pcall(function()
+											local vel = root.AssemblyLinearVelocity or root.Velocity
+											if vel then
+												local moveTowards = vel.X * (-pushDir.X) + vel.Z * (-pushDir.Z)
+												if moveTowards > 0 then
+													local correctedVel = Vector3.new(
+														vel.X - (-pushDir.X * moveTowards),
+														vel.Y,
+														vel.Z - (-pushDir.Z * moveTowards)
+													)
+													root.AssemblyLinearVelocity = correctedVel
+													root.Velocity = correctedVel
+												end
 											end
-										end
+										end)
 									end
 								end
 							end
@@ -8292,23 +8195,32 @@ Toggles.Camlock:OnChanged(function()
 							myPos.Z + pullDir.Z * pullStep
 						)
 
-						local maxVelAllowed = math.max(0, (currentDist - stopBoundary)) / 0.016
-						local safeVelMag = math.min(velMag, maxVelAllowed)
-						local curVel = root.AssemblyLinearVelocity or Vector3.zero
-						local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
-						local curTowards = flatCur:Dot(pullDir)
-						local desiredTowards = math.max(curTowards, safeVelMag)
-						local deltaTowards = desiredTowards - curTowards
-						local newFlat = flatCur + pullDir * deltaTowards
-						root.AssemblyLinearVelocity = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
+						pcall(function()
+							local maxVelAllowed = math.max(0, (currentDist - stopBoundary)) / 0.016
+							local safeVelMag = math.min(velMag, maxVelAllowed)
+							local pullVel = pullDir * safeVelMag
+							local curVel = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
+							local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
+							local curTowards = flatCur:Dot(pullDir)
+							local desiredTowards = math.max(curTowards, safeVelMag)
+							local deltaTowards = desiredTowards - curTowards
+							local newFlat = flatCur + pullDir * deltaTowards
+							local newVel = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
+							root.AssemblyLinearVelocity = newVel
+							root.Velocity = newVel
+						end)
 					elseif currentDist <= stopBoundary and pullDir.Magnitude > 0 then
-						local curVel = root.AssemblyLinearVelocity or Vector3.zero
-						local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
-						local curTowards = flatCur:Dot(pullDir)
-						if curTowards > 0 then
-							local newFlat = flatCur - pullDir * curTowards
-							root.AssemblyLinearVelocity = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
-						end
+						pcall(function()
+							local curVel = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
+							local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
+							local curTowards = flatCur:Dot(pullDir)
+							if curTowards > 0 then
+								local newFlat = flatCur - pullDir * curTowards
+								local newVel = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
+								root.AssemblyLinearVelocity = newVel
+								root.Velocity = newVel
+							end
+						end)
 					end
 				end
 			end
@@ -8468,7 +8380,7 @@ do
 
 		-- Water Bypass: for as long as the module is active the camlock slot
 		-- system stays off, so it never forces the camlock back on while swimming.
-		if isWaterBypassActive(TSG_SampleInWater()) then
+		if isWaterBypassActive() then
 			if Toggles.Camlock and Toggles.Camlock.Value then
 				Toggles.Camlock:SetValue(false)
 			end
@@ -8547,18 +8459,9 @@ do
 			if LocalPlayer.Character then
 				hookCamlockSlotChar(LocalPlayer.Character)
 			end
-			track("CamlockSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-				hookCamlockSlotChar(char)
-				task.delay(0.2, updateCamlockSlotSystemState)
-			end))
-			track("CamlockSlotSystem_ToolAttr", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateCamlockSlotSystemState))
+			track("CamlockSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookCamlockSlotChar))
 
-			local lastCLWaterPoll = 0
 			track("CamlockSlotSystem_Poll", RunService.Heartbeat:Connect(function()
-				if not (Toggles.WaterBypass and Toggles.WaterBypass.Value) then return end
-				local now = os.clock()
-				if now - lastCLWaterPoll < 0.2 then return end
-				lastCLWaterPoll = now
 				updateCamlockSlotSystemState()
 			end))
 
@@ -8717,14 +8620,9 @@ if Toggles.AutoJump then
 
 		if Toggles.AutoJump.Value then
 			local lastJumpTime = 0
-			local lastJumpScan = 0
 			local trackedPlayerJumps = {}
 
 			track("AutoJump", RunService.Heartbeat:Connect(function()
-				local nowClock = os.clock()
-				if nowClock - lastJumpScan < 0.05 then return end
-				lastJumpScan = nowClock
-
 				if not isAlive() then return end
 				local myRoot = getRootPart()
 				local myHum = getHumanoid()
@@ -8860,33 +8758,30 @@ local function phantomModeLoop(dt)
 		local orbitPosition = targetRoot.Position + Vector3.new(offsetX, phantomModeVars.orbitHeight, offsetZ)
 		myRoot.CFrame = CFrame.new(orbitPosition, targetRoot.Position)
 
-		-- Enable Kill Aura and set best weapon (throttled instead of scanning full item DB every frame)
+		-- Enable Kill Aura and set best weapon
 		if not Toggles.KillAura.Value then
 			Toggles.KillAura:SetValue(true)
 		end
 
-		local nowClock = os.clock()
-		if nowClock - (phantomModeVars.lastWeaponCheck or 0) >= 1.5 then
-			phantomModeVars.lastWeaponCheck = nowClock
-			local bestWeaponId = getBestMeleeWeapon()
-			if bestWeaponId then
-				local wantedSlot = nil
-				local backpack = LocalPlayer:FindFirstChild("Backpack")
-				local char = LocalPlayer.Character
-				for i = 1, 10 do
-					local slotStr = tostring(i)
-					local slotTool = (backpack and backpack:FindFirstChild(slotStr)) or (char and char:FindFirstChild(slotStr))
-					if slotTool and slotTool:FindFirstChild("toolModel") then
-						local toolId = slotTool.toolModel:GetAttribute("itemId")
-						if toolId == bestWeaponId then
-							wantedSlot = slotStr
-							break
-						end
+		-- Find and set best melee weapon
+		local bestWeaponId = getBestMeleeWeapon()
+		if bestWeaponId then
+			local wantedSlot = nil
+			local backpack = LocalPlayer:FindFirstChild("Backpack")
+			local char = LocalPlayer.Character
+			for i = 1, 10 do
+				local slotStr = tostring(i)
+				local slotTool = (backpack and backpack:FindFirstChild(slotStr)) or (char and char:FindFirstChild(slotStr))
+				if slotTool and slotTool:FindFirstChild("toolModel") then
+					local toolId = slotTool.toolModel:GetAttribute("itemId")
+					if toolId == bestWeaponId then
+						wantedSlot = slotStr
+						break
 					end
 				end
-				if wantedSlot and Options.KillAuraSlot and Options.KillAuraSlot.Value ~= wantedSlot then
-					Options.KillAuraSlot:SetValue(wantedSlot)
-				end
+			end
+			if wantedSlot and Options.KillAuraSlot and Options.KillAuraSlot.Value ~= wantedSlot then
+				Options.KillAuraSlot:SetValue(wantedSlot)
 			end
 		end
 	else
@@ -9179,22 +9074,23 @@ function SilentAimHK.shotWindowOpen()
 	return tick() <= (SilentAimHK.ShotUntil or 0)
 end
 
--- Keep the shot window fresh on whatever tool the player is holding (deduplicated per tool).
-function SilentAimHK.bindShotTool(tool)
-	if not tool or not tool:IsA("Tool") then return end
-	if tool:GetAttribute("SAHKShotBound") then return end
-	tool:SetAttribute("SAHKShotBound", true)
-	tool.Activated:Connect(function()
-		SilentAimHK.markShot()
-	end)
-end
-
+-- Keep the shot window fresh on whatever tool the player is holding.
 function SilentAimHK.hookShotChar(char)
 	if not char then return end
 	disconnect("SilentAimHKShotTool")
-	track("SilentAimHKShotTool", char.ChildAdded:Connect(SilentAimHK.bindShotTool))
+	track("SilentAimHKShotTool", char.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			child.Activated:Connect(function()
+				SilentAimHK.markShot()
+			end)
+		end
+	end))
 	for _, child in ipairs(char:GetChildren()) do
-		SilentAimHK.bindShotTool(child)
+		if child:IsA("Tool") then
+			child.Activated:Connect(function()
+				SilentAimHK.markShot()
+			end)
+		end
 	end
 end
 
@@ -9241,18 +9137,12 @@ function SilentAimHK.isEnabled()
 	return (Toggles.SilentAimHK and Toggles.SilentAimHK.Value) == true
 end
 
--- Which of the four interception methods are switched on right now (cached; invalidated on dropdown change).
-SilentAimHK.CachedMethods = nil
-
+-- Which of the four interception methods are switched on right now.
 function SilentAimHK.getAimMethods()
-	if SilentAimHK.CachedMethods then
-		return SilentAimHK.CachedMethods
-	end
 	local selected = Options.SAHKAimMethods and Options.SAHKAimMethods.Value
 	local result = { ray = false, fire = false, invoke = false, mouse = false }
 	if type(selected) ~= "table" then
 		result.ray = true
-		SilentAimHK.CachedMethods = result
 		return result
 	end
 	for key, value in pairs(selected) do
@@ -9270,7 +9160,6 @@ function SilentAimHK.getAimMethods()
 	if not (result.ray or result.fire or result.invoke or result.mouse) then
 		result.ray = true
 	end
-	SilentAimHK.CachedMethods = result
 	return result
 end
 
@@ -9327,13 +9216,21 @@ end
 -- setting. "Random" rolls the Headshot Chance so the aim wanders between the
 -- head and the torso instead of always taking the same one.
 function SilentAimHK.getTargetPart(character)
-	local mode = (Options.SAHKTargetPart and Options.SAHKTargetPart.Value) or "Head"
+	local mode = (Options.SAHKTargetPart and Options.SAHKTargetPart.Value) or "Torso"
 	if mode == "Random" then
 		local chance = (Options.SAHKHeadshotChance and Options.SAHKHeadshotChance.Value) or 100
 		if math.random(1, 100) <= chance then
 			return character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
 		end
 		return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head")
+	end
+	-- "Torso" covers both rigs: R15 splits it into UpperTorso / LowerTorso while
+	-- R6 keeps a single Torso part, so try each before falling back.
+	if mode == "Torso" then
+		return character:FindFirstChild("UpperTorso")
+			or character:FindFirstChild("Torso")
+			or character:FindFirstChild("LowerTorso")
+			or character:FindFirstChild("HumanoidRootPart")
 	end
 	return character:FindFirstChild(mode)
 		or character:FindFirstChild("Head")
@@ -9361,22 +9258,45 @@ function SilentAimHK.isVisible(player, character)
 	return visible
 end
 
--- Prediction is built in rather than exposed as a slider; kept at 0 so no
--- velocity lead is applied for now.
+-- Velocity based prediction. The lead time is how long the shot takes to reach
+-- the target (distance / projectile speed) and the lead itself is that time
+-- multiplied by the target's own velocity, so the correction grows with both
+-- how far the target is and how fast it is moving. PROJECTILE_SPEED is the
+-- assumed travel speed of the game's projectiles (lower = leads harder) and
+-- MAX_LEAD caps a single shot's lead so the aim can never be dragged far past
+-- the target. Both live on the table to stay clear of the local register budget.
+SilentAimHK.PROJECTILE_SPEED = 400
+SilentAimHK.MAX_LEAD = 0.3
+
 function SilentAimHK.predict(part)
 	if not part or not part.Parent then
 		return part and part.Position or nil
 	end
 	local pos = part.Position
-	local predTime = 0
-	if predTime <= 0 then
+	-- AssemblyLinearVelocity is the current API; Velocity is the older name kept
+	-- as a fallback for executors that do not expose the new one.
+	local vel = part.AssemblyLinearVelocity or part.Velocity
+	if not vel then
 		return pos
 	end
-	return pos + ((part.AssemblyLinearVelocity or Vector3.zero) * predTime)
+	-- A standing target gets no lead at all, so a still enemy is hit dead centre.
+	if vel.Magnitude < 1 then
+		return pos
+	end
+	-- Distance from the shooter, so the lead matches this shot's travel time.
+	local character = getCharacter()
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local origin = root and root.Position or pos
+	local dist = (pos - origin).Magnitude
+	local lead = math.clamp(dist / SilentAimHK.PROJECTILE_SPEED, 0, SilentAimHK.MAX_LEAD)
+	-- Faster target -> larger velocity -> further ahead the aim lands.
+	return pos + (vel * lead)
 end
 
--- Picks the target part every throttle tick. FOV Radius limits the search unless
--- 360 Mode is on; Priority Mode then decides which valid target wins.
+-- Picks the target part every throttle tick. There is no distance cap: every
+-- player with a live, visible-to-the-loop character is a candidate, so shots
+-- register at any range. FOV Radius limits the search unless 360 Mode is on;
+-- Priority Mode then decides which valid target wins.
 function SilentAimHK.findTarget()
 	local camera = workspace.CurrentCamera
 	local character = getCharacter()
@@ -9385,7 +9305,6 @@ function SilentAimHK.findTarget()
 
 	local threeSixty = (Toggles.SAHK360Mode and Toggles.SAHK360Mode.Value) or false
 	local radius = (Options.SAHKFOVRadius and Options.SAHKFOVRadius.Value) or 100
-	local range = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 500
 	local wallCheck = (Toggles.SAHKWallCheck and Toggles.SAHKWallCheck.Value) or false
 	local priority = (Options.SAHKPriorityMode and Options.SAHKPriorityMode.Value) or "Crosshair"
 
@@ -9400,25 +9319,23 @@ function SilentAimHK.findTarget()
 				local otherRoot = otherChar:FindFirstChild("HumanoidRootPart")
 				if otherRoot then
 					local worldDist = (otherRoot.Position - root.Position).Magnitude
-					if worldDist <= range then
-						local part = SilentAimHK.getTargetPart(otherChar)
-						if part and part.Parent and (not wallCheck or SilentAimHK.isVisible(otherPlayer, otherChar)) then
-							local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
-							local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-							-- The FOV circle only constrains while 360 Mode is off.
-							local inFOV = threeSixty or (onScreen and screenDist <= radius)
-							if inFOV then
-								local score
-								if priority == "Distance" then
-									score = worldDist
-								elseif priority == "Health" then
-									score = humanoid.Health
-								else
-									score = screenDist
-								end
-								if score < bestScore then
-									bestPart, bestScore = part, score
-								end
+					local part = SilentAimHK.getTargetPart(otherChar)
+					if part and part.Parent and (not wallCheck or SilentAimHK.isVisible(otherPlayer, otherChar)) then
+						local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+						local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+						-- The FOV circle only constrains while 360 Mode is off.
+						local inFOV = threeSixty or (onScreen and screenDist <= radius)
+						if inFOV then
+							local score
+							if priority == "Distance" then
+								score = worldDist
+							elseif priority == "Health" then
+								score = humanoid.Health
+							else
+								score = screenDist
+							end
+							if score < bestScore then
+								bestPart, bestScore = part, score
 							end
 						end
 					end
@@ -9689,18 +9606,7 @@ function SilentAimHK.Namecall(original, ...)
 		-- A hitscan ray has no travel time to remove, and moving its origin next
 		-- to the target makes the game's own Raycast start inside the target and
 		-- register a miss, so Bullet Teleport leaves the origin alone here.
-		-- The ray is aimed at the target, but its length must not be the game's
-		-- own ray length: the game builds that length out of the weapon's own
-		-- range, so reusing it makes the redirected shot stop short and miss
-		-- whenever the target sits past that range. The length is therefore
-		-- stretched to always reach the target (but never shortened if the
-		-- game's ray was already longer).
-		local reach = direction.Magnitude
-		local needed = toTarget.Magnitude + 1
-		if reach < needed then
-			reach = needed
-		end
-		return original(raySelf, origin, toTarget.Unit * reach, select(4, ...))
+		return original(raySelf, origin, toTarget.Unit * direction.Magnitude, select(4, ...))
 	end
 
 	local args = table.pack(...)
@@ -9906,24 +9812,20 @@ function SilentAimHK.sync()
 		track("SilentAimHKAnim", RunService.RenderStepped:Connect(function(dt)
 			SilentAimHK.stepRing(dt)
 		end))
-		local lastSampledTool = false
-		local lastSampledId = false
 		track("SilentAimHKLoop", RunService.Heartbeat:Connect(function(dt)
-			-- Refresh the WallBang water sample using the shared throttled raycast cache.
+			-- Refresh the WallBang water sample here, off the hook's stack, so the
+			-- intercept itself never triggers another engine call.
 			if Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value then
-				SilentAimHK.InWater = TSG_SampleInWater()
+				SilentAimHK.InWater = isInWater()
 			end
-			-- Only re-evaluate HeldWeapon / SlotAllowed when the held tool or equippedTool attribute changes.
-			local char = getCharacter()
-			local curTool = char and char:FindFirstChildOfClass("Tool") or nil
-			local curId = LocalPlayer:GetAttribute("equippedTool")
-			if curTool ~= lastSampledTool or curId ~= lastSampledId then
-				lastSampledTool = curTool
-				lastSampledId = curId
-				SilentAimHK.HeldWeapon = IsHoldingWeapon()
-				SilentAimHK.SlotAllowed = (not (Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value))
-					or isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
-			end
+			-- Same idea for the mouse guard: keep the "weapon in hand" sample up to
+			-- date here so the mouse interception below never has to do item-data
+			-- lookups while the game is reading Mouse.Target.
+			SilentAimHK.HeldWeapon = IsHoldingWeapon()
+			-- Slot System sample, also refreshed off the hook's stack. With the
+			-- Slot System off this is simply true, so silent aim is unrestricted.
+			SilentAimHK.SlotAllowed = (not (Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value))
+				or isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
 			local responsiveness = (Options.SAHKResponsiveness and Options.SAHKResponsiveness.Value) or 0.5
 			SilentAimHK.Accum = SilentAimHK.Accum + (dt or 0)
 			if SilentAimHK.Accum < responsiveness then return end
@@ -9957,14 +9859,7 @@ end)
 
 -- The mouse hook only needs to exist while "Mouse.Hit" is selected.
 Options.SAHKAimMethods:OnChanged(function()
-	SilentAimHK.CachedMethods = nil
 	SilentAimHK.syncMouseHook()
-end)
-
-Options.SAHKSlotSystemSlot:OnChanged(function()
-	if Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value then
-		SilentAimHK.SlotAllowed = isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
-	end
 end)
 
 -- Push the new radius to the ring the moment the slider moves, so the smooth
@@ -10202,7 +10097,9 @@ do
 			local hrp = character and character:FindFirstChild("HumanoidRootPart")
 			if not hrp or not waterPlatform then return end
 			local pos = hrp.Position
-			local ok, waterHeight = pcall(HeightLookup.Lookup, pos, "PRECISE", false)
+			local ok, waterHeight = pcall(function()
+				return HeightLookup.Lookup(pos, "PRECISE", false)
+			end)
 			if ok and typeof(waterHeight) == "number" then
 				if pos.Y < waterHeight + 5 then
 					waterPlatform.CFrame = CFrame.new(pos.X, waterHeight + 0.5, pos.Z)
@@ -10587,28 +10484,19 @@ Toggles.InfiniteBackpack:OnChanged(function()
 end)
 
 local originalMountSpeeds = {}
-TSG_CachedMountSeat = nil
-TSG_CachedMountModel = nil
 
 local function getCurrentMount()
 	local humanoid = getHumanoid()
-	local seat = humanoid and humanoid.SeatPart or nil
-	if not seat then
-		TSG_CachedMountSeat = nil
-		TSG_CachedMountModel = nil
-		return nil, nil
+	if humanoid and humanoid.SeatPart then
+		local seat = humanoid.SeatPart
+		local folder = seat:FindFirstAncestorOfClass("Folder")
+		if folder and folder == workspace:FindFirstChild("boats") then
+			return nil, nil
+		end
+		local mountModel = seat:FindFirstAncestorOfClass("Model")
+		return mountModel, seat
 	end
-	if seat == TSG_CachedMountSeat and TSG_CachedMountModel and TSG_CachedMountModel.Parent then
-		return TSG_CachedMountModel, seat
-	end
-	TSG_CachedMountSeat = seat
-	local folder = seat:FindFirstAncestorOfClass("Folder")
-	if folder and folder == workspace:FindFirstChild("boats") then
-		TSG_CachedMountModel = nil
-		return nil, nil
-	end
-	TSG_CachedMountModel = seat:FindFirstAncestorOfClass("Model")
-	return TSG_CachedMountModel, seat
+	return nil, nil
 end
 
 Toggles.MountSpeedBoost:OnChanged(function()
@@ -10699,11 +10587,11 @@ Toggles.PlusSpeedBoost:OnChanged(function()
 			local root = getRootPart()
 			if not humanoid or not root then return end
 			local isSwimming = humanoid:GetState() == Enum.HumanoidStateType.Swimming or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("inWater"))
-			if not isSwimming and humanoid.MoveDirection.Magnitude > 0 then
+			if not isSwimming then
 				if isSpeedBoostSlotAllowed(Options.SpeedBoostSlot) then
 					local targetSpeed = Options.SpeedValue and Options.SpeedValue.Value or 24
 					local factor = targetSpeed - humanoid.WalkSpeed
-					if factor > 0 then
+					if factor > 0 and humanoid.MoveDirection.Magnitude > 0 then
 						LocalPlayer.Character:TranslateBy(humanoid.MoveDirection * dt * factor)
 					end
 				end
@@ -10753,11 +10641,11 @@ Toggles.SwimSlotBoost:OnChanged(function()
 			local root = getRootPart()
 			if not humanoid or not root then return end
 			local isSwimming = humanoid:GetState() == Enum.HumanoidStateType.Swimming or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("inWater"))
-			if isSwimming and humanoid.MoveDirection.Magnitude > 0 then
+			if isSwimming then
 				if isSpeedBoostSlotAllowed(Options.SwimSlotBoostSlot) then
 					local targetSpeed = Options.SwimBoostValue and Options.SwimBoostValue.Value or 30
 					local factor = targetSpeed - humanoid.WalkSpeed
-					if factor > 0 then
+					if factor > 0 and humanoid.MoveDirection.Magnitude > 0 then
 						LocalPlayer.Character:TranslateBy(humanoid.MoveDirection * dt * factor)
 					end
 				end
@@ -10927,68 +10815,20 @@ Toggles.AntiAFK:OnChanged(function()
 	end
 end)
 
-TSG_AnimSpeedConns = TSG_AnimSpeedConns or {}
-
-local function clearAnimSpeedConns()
-	disconnect("AnimSpeedPlayed")
-	for trackObj, conn in pairs(TSG_AnimSpeedConns) do
-		pcall(function() conn:Disconnect() end)
-		TSG_AnimSpeedConns[trackObj] = nil
-	end
-end
-
-local function applyAnimationSpeed(trackObj)
-	local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
-	trackObj:AdjustSpeed(targetSpeed)
-end
-
-local function setupAnimationSpeedHacks(char)
-	clearAnimSpeedConns()
-	if not (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) or not char then return end
-	local hum = char:WaitForChild("Humanoid", 10)
-	local animator = hum and hum:WaitForChild("Animator", 10)
-	if animator and Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value then
-		local function bindTrack(trackObj)
-			if not trackObj or TSG_AnimSpeedConns[trackObj] then return end
-			local adjusting = false
-			local function enforceSpeed()
-				if adjusting then return end
-				if not (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) then return end
-				local targetSpeed = (Options.SwingSpeedVal and Options.SwingSpeedVal.Value) or 1
-				if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
-					adjusting = true
-					trackObj:AdjustSpeed(targetSpeed)
-					adjusting = false
-				end
-			end
-			enforceSpeed()
-			TSG_AnimSpeedConns[trackObj] = trackObj:GetPropertyChangedSignal("Speed"):Connect(enforceSpeed)
-		end
-		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(bindTrack))
-		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
-			bindTrack(trackObj)
-		end
-	end
-end
-
 Toggles.SwingSpeedToggle:OnChanged(function()
 	if updateAutoSwingSliderVisibility then
 		updateAutoSwingSliderVisibility()
 	end
 	if Toggles.SwingSpeedToggle.Value then
 		Library:Notify({ Title = "Swing Speed", Description = "Enabled", Time = 2 })
-		if LocalPlayer.Character then
-			task.spawn(setupAnimationSpeedHacks, LocalPlayer.Character)
-		end
-	else
-		clearAnimSpeedConns()
-		local char = getCharacter()
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		local animator = hum and hum:FindFirstChild("Animator")
-		if animator then
-			for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
-				trackObj:AdjustSpeed(1)
-			end
+	end
+	local char = getCharacter()
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local animator = hum and hum:FindFirstChild("Animator")
+	if animator then
+		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
+			local targetSpeed = Toggles.SwingSpeedToggle.Value and Options.SwingSpeedVal.Value or 1
+			trackObj:AdjustSpeed(targetSpeed)
 		end
 	end
 end)
@@ -11006,11 +10846,41 @@ Options.SwingSpeedVal:OnChanged(function()
 	end
 end)
 
+local function applyAnimationSpeed(trackObj)
+	local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
+	trackObj:AdjustSpeed(targetSpeed)
+end
+
+local function setupAnimationSpeedHacks(char)
+	local hum = char:WaitForChild("Humanoid", 10)
+	local animator = hum and hum:WaitForChild("Animator", 10)
+	if animator then
+		disconnect("AnimSpeedPlayed")
+		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(function(trackObj)
+			local adjusting = false
+			local function enforceSpeed()
+				if adjusting then return end
+				local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
+				if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
+					adjusting = true
+					trackObj:AdjustSpeed(targetSpeed)
+					adjusting = false
+				end
+			end
+			enforceSpeed()
+			trackObj:GetPropertyChangedSignal("Speed"):Connect(enforceSpeed)
+		end))
+		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
+			applyAnimationSpeed(trackObj)
+		end
+	end
+end
+
 track("SwingCharacterAdded", LocalPlayer.CharacterAdded:Connect(function(char)
 	setupAnimationSpeedHacks(char)
 end))
 
-if LocalPlayer.Character and Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value then
+if LocalPlayer.Character then
 	setupAnimationSpeedHacks(LocalPlayer.Character)
 end
 
@@ -12296,30 +12166,9 @@ function resourceNameMatches(obj, filterValue)
 	return false
 end
 
-TSG_LastAutoMineScan = 0
-TSG_LastAutoChopScan = 0
-TSG_ResourcePartCache = setmetatable({}, { __mode = "k" })
-
-function TSG_GetCachedResourcePart(obj, preferPrimary)
-	local cached = TSG_ResourcePartCache[obj]
-	if cached and cached.Parent then
-		return cached
-	end
-	local part
-	if preferPrimary then
-		part = getMineableAnchor(obj)
-	else
-		part = getChopTargetPart(obj)
-	end
-	if part then
-		TSG_ResourcePartCache[obj] = part
-	end
-	return part
-end
-
 local function mineObject(obj)
 	local slot = tonumber(Options.AutoMineSlot.Value) or 1
-	local anchor = obj and TSG_GetCachedResourcePart(obj, true)
+	local anchor = obj and getMineableAnchor(obj)
 	if anchor then
 		pcall(function()
 			TSG.MineRemote:FireServer(slot, obj, CFrame.new(anchor.Position))
@@ -12329,11 +12178,9 @@ end
 
 local function autoMine()
 	if not isAlive() or not isAutoMineRunning then return end
-	local now = tick()
 	local mineSpeed = (Options.AutoMineSpeed and Options.AutoMineSpeed.Value) or 5
 	local mineCooldown = 1 / math.max(0.1, mineSpeed)
-	if now - lastAutoMineHit < mineCooldown or now - TSG_LastAutoMineScan < 0.08 then return end
-	TSG_LastAutoMineScan = now
+	if tick() - lastAutoMineHit < mineCooldown then return end
 
 	local root = getRootPart()
 	if not root then return end
@@ -12342,7 +12189,7 @@ local function autoMine()
 	local closest, dist = nil, maxRange
 	forEachResourceNode(getMineableFolder(), function(obj)
 		if not resourceNameMatches(obj, nameFilter) then return end
-		local anchor = TSG_GetCachedResourcePart(obj, true)
+		local anchor = getMineableAnchor(obj)
 		if anchor then
 			local d = (root.Position - anchor.Position).Magnitude
 			if d < dist then
@@ -12351,7 +12198,7 @@ local function autoMine()
 		end
 	end)
 	if closest then
-		lastAutoMineHit = now
+		lastAutoMineHit = tick()
 		mineObject(closest)
 	end
 end
@@ -12381,7 +12228,7 @@ end)
 -- checkbox, which uses the harvest remote with the same range / speed / name filter.
 local function chopObject(obj)
 	local slot = tonumber(Options.AutoChopSlot.Value) or 1
-	local part = TSG_GetCachedResourcePart(obj, false)
+	local part = getChopTargetPart(obj)
 	if part then
 		pcall(function()
 			TSG.ChopRemote:FireServer(slot, obj, part.CFrame)
@@ -12391,11 +12238,9 @@ end
 
 local function autoChop()
 	if not isAlive() or not isAutoChopRunning then return end
-	local now = tick()
 	local chopSpeed = (Options.AutoChopSpeed and Options.AutoChopSpeed.Value) or 5
 	local chopCooldown = 1 / math.max(0.1, chopSpeed)
-	if now - lastAutoChopHit < chopCooldown or now - TSG_LastAutoChopScan < 0.08 then return end
-	TSG_LastAutoChopScan = now
+	if tick() - lastAutoChopHit < chopCooldown then return end
 
 	local root = getRootPart()
 	if not root then return end
@@ -12411,7 +12256,7 @@ local function autoChop()
 			if subfolder:IsA("Folder") then
 				for _, obj in ipairs(subfolder:GetChildren()) do
 					if resourceNameMatches(obj, nameFilter) then
-						local part = TSG_GetCachedResourcePart(obj, false)
+						local part = getChopTargetPart(obj)
 						if part then
 							local d = getFlatDistance(root.Position, part.Position)
 							if d < dist then
@@ -12429,7 +12274,7 @@ local function autoChop()
 	end
 
 	if didHit then
-		lastAutoChopHit = now
+		lastAutoChopHit = tick()
 	end
 end
 
@@ -12514,12 +12359,11 @@ do
 				if LocalPlayer.Character then
 					hookMineSlotChar(LocalPlayer.Character)
 				end
-				track("AutoMineSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-					hookMineSlotChar(char)
-					task.delay(0.2, updateMineSlotSystemState)
-				end))
+				track("AutoMineSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookMineSlotChar))
 
-				track("AutoMineSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateMineSlotSystemState))
+				track("AutoMineSlotSystem_Poll", RunService.Heartbeat:Connect(function()
+					updateMineSlotSystemState()
+				end))
 
 				updateMineSlotSystemState()
 
@@ -12607,12 +12451,11 @@ do
 				if LocalPlayer.Character then
 					hookChopSlotChar(LocalPlayer.Character)
 				end
-				track("AutoChopSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-					hookChopSlotChar(char)
-					task.delay(0.2, updateChopSlotSystemState)
-				end))
+				track("AutoChopSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookChopSlotChar))
 
-				track("AutoChopSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateChopSlotSystemState))
+				track("AutoChopSlotSystem_Poll", RunService.Heartbeat:Connect(function()
+					updateChopSlotSystemState()
+				end))
 
 				updateChopSlotSystemState()
 
@@ -12641,12 +12484,9 @@ end
 
 -- ==========================================
 local lastAiAuraHit = 0
-TSG_LastAiAuraScan = 0
 
 local function aiAuraLoop()
-	local now = tick()
-	if now - lastAiAuraHit < 0.25 or now - TSG_LastAiAuraScan < 0.08 or not isAlive() then return end
-	TSG_LastAiAuraScan = now
+	if not isAlive() or tick() - lastAiAuraHit < 0.25 then return end
 	local root = getRootPart()
 	if not root then return end
 
@@ -12778,12 +12618,11 @@ do
 				if LocalPlayer.Character then
 					hookAiAuraSlotChar(LocalPlayer.Character)
 				end
-				track("AiAuraSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
-					hookAiAuraSlotChar(char)
-					task.delay(0.2, updateAiAuraSlotSystemState)
-				end))
+				track("AiAuraSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAiAuraSlotChar))
 
-				track("AiAuraSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAiAuraSlotSystemState))
+				track("AiAuraSlotSystem_Poll", RunService.Heartbeat:Connect(function()
+					updateAiAuraSlotSystemState()
+				end))
 
 				updateAiAuraSlotSystemState()
 
@@ -12914,10 +12753,6 @@ do
 			if now - bossNotifyLastRefresh < 1 then return end
 			bossNotifyLastRefresh = now
 			refreshBossHooks()
-			if Connections["BossNotify_Workspace"] and Connections["BossNotify_AI_Server"]
-				and Connections["BossNotify_AI_Client"] and Connections["BossNotify_AIModels"] then
-				disconnect("BossNotify_Poll")
-			end
 		end))
 
 		Library:Notify({ Title = "Boss Spawn Notifier", Description = "Enabled", Time = 2 })
@@ -12975,29 +12810,15 @@ local function getOreColor(oreName, index)
 	return c
 end
 
-local function getOreESPContainer()
-	if oreESP.container and oreESP.container.Parent then
-		return oreESP.container
-	end
-	local parent = (typeof(getESPFolder) == "function" and getESPFolder()) or workspace
-	local folder = Instance.new("Folder")
-	folder.Name = "URIEL_OreESP_Container"
-	folder.Parent = parent
-	oreESP.container = folder
-	return folder
-end
-
 local function clearOreESPHighlights()
 	for _, entry in pairs(oreESP.highlights) do
-		pcall(function() if entry.hl then entry.hl:Destroy() end end)
-		pcall(function() if entry.bill then entry.bill:Destroy() end end)
+		pcall(function() entry.hl:Destroy() end)
+		pcall(function() entry.bill:Destroy() end)
 	end
 	table.clear(oreESP.highlights)
-	if oreESP.container then
-		pcall(function() oreESP.container:ClearAllChildren() end)
-	end
 
-	-- Safety sweep in case any legacy instances were parented to workspace.
+	-- Safety sweep: remove any leftover ESP instances that lost their table entry,
+	-- so turning the toggle off ALWAYS hides the mineables.
 	for _, child in ipairs(workspace:GetChildren()) do
 		if child.Name == oreESP.hlName or child.Name == oreESP.billName then
 			pcall(function() child:Destroy() end)
@@ -13015,8 +12836,7 @@ local lastOreESPUpdate = 0
 
 local function oreESPLoop()
 	local now = tick()
-	local interval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.8 or 0.5
-	if now - lastOreESPUpdate < interval then return end
+	if now - lastOreESPUpdate < 0.5 then return end
 	lastOreESPUpdate = now
 
 	local folder = workspace:FindFirstChild("worldResources") and workspace.worldResources:FindFirstChild("mineable")
@@ -13029,11 +12849,8 @@ local function oreESPLoop()
 	local maxDist = (Options and Options.OreESPDistance and Options.OreESPDistance.Value) or 500
 	local showNames = not (Toggles and Toggles.OreESPRemoveNames and Toggles.OreESPRemoveNames.Value)
 	local chamsEnabled = (Toggles and Toggles.OreESPHighlights and Toggles.OreESPHighlights.Value) ~= false
-	local maxBillboards = (TSG_LowGraphics and TSG_LowGraphics()) and 20 or 40
 	local seen = {}
-	local candidateBillboards = {}
 	local candidateHighlights = {}
-	local container = getOreESPContainer()
 
 	for _, chunkFolder in ipairs(folder:GetChildren()) do
 		if not chunkFolder:IsA("Folder") then continue end
@@ -13042,13 +12859,12 @@ local function oreESPLoop()
 			local oreName = obj.Name or "Unknown"
 			local enabled = isOreFilterEnabled(oreName)
 
-			local existing = oreESP.highlights[obj]
-			local anchor = (existing and existing.anchor and existing.anchor.Parent) and existing.anchor
-				or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or (obj:IsA("BasePart") and obj))
+			local anchor = obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or (obj:IsA("BasePart") and obj)
 			local dist = anchor and (anchor.Position - rootPos).Magnitude or 9999
 
 			-- Distance and filter culling: Skip processing if disabled or out of range
 			if not enabled or dist > maxDist then
+				local existing = oreESP.highlights[obj]
 				if existing then
 					if existing.hl and existing.hl.Enabled then existing.hl.Enabled = false end
 					if existing.bill and existing.bill.Enabled then existing.bill.Enabled = false end
@@ -13058,27 +12874,59 @@ local function oreESPLoop()
 
 			seen[obj] = oreName
 			local oreColor = getOreColor(oreName)
-			local entry = existing
+			local entry = oreESP.highlights[obj]
 
 			if not entry then
-				entry = { hl = nil, bill = nil, lbl = nil, anchor = anchor, oreName = oreName, lastColor = oreColor, lastEnabled = enabled, dist = dist }
+				local bill = nil
+				local lbl = nil
+				if anchor then
+					bill = Instance.new("BillboardGui")
+					bill.Name = oreESP.billName
+					bill.Size = UDim2.fromOffset(160, 28)
+					bill.AlwaysOnTop = true
+					bill.Adornee = anchor
+					bill.StudsOffset = Vector3.new(0, 3.2, 0)
+					bill.MaxDistance = maxDist
+
+					lbl = Instance.new("TextLabel")
+					lbl.Size = UDim2.fromScale(1, 1)
+					lbl.BackgroundTransparency = 1
+					lbl.TextColor3 = oreColor
+					lbl.TextStrokeTransparency = 0.4
+					lbl.Font = Enum.Font.Gotham
+					lbl.TextSize = 16
+					lbl.RichText = true
+					lbl.Text = '<font color="#' .. oreColor:ToHex() .. '">' .. oreName .. '</font>'
+					lbl.Parent = bill
+
+					bill.Enabled = showNames
+					bill.Parent = workspace
+				end
+
+				entry = { hl = nil, bill = bill, lbl = lbl, oreName = oreName, lastColor = oreColor, lastEnabled = enabled, lastShowNames = showNames, dist = dist }
 				oreESP.highlights[obj] = entry
 			else
-				entry.anchor = anchor
 				entry.dist = dist
+				if entry.bill then
+					if entry.bill.MaxDistance ~= maxDist then
+						entry.bill.MaxDistance = maxDist
+					end
+					if entry.lastShowNames ~= showNames then
+						entry.lastShowNames = showNames
+						entry.bill.Enabled = showNames
+					end
+				end
 				if entry.lastColor ~= oreColor then
 					entry.lastColor = oreColor
 					if entry.hl then entry.hl.FillColor = oreColor end
 					if entry.lbl then
 						entry.lbl.TextColor3 = oreColor
+						entry.lbl.Text = '<font color="#' .. oreColor:ToHex() .. '">' .. oreName .. '</font>'
 					end
 				end
-			end
-
-			if showNames and anchor then
-				table.insert(candidateBillboards, { entry = entry, anchor = anchor, color = oreColor, oreName = oreName, dist = dist })
-			elseif entry.bill and entry.bill.Enabled then
-				entry.bill.Enabled = false
+				if entry.bill and entry.bill.Adornee == nil and anchor then
+					entry.bill.Adornee = anchor
+				end
 			end
 
 			if chamsEnabled and dist <= 60 then
@@ -13086,52 +12934,6 @@ local function oreESPLoop()
 			elseif entry and entry.hl and entry.hl.Enabled then
 				entry.hl.Enabled = false
 			end
-		end
-	end
-
-	-- Cap active BillboardGuis to the closest ores so large farms/mines don't flood UI rendering.
-	if #candidateBillboards > 1 then
-		table.sort(candidateBillboards, function(a, b) return a.dist < b.dist end)
-	end
-	for i, item in ipairs(candidateBillboards) do
-		local entry = item.entry
-		if i <= maxBillboards then
-			if not entry.bill then
-				local bill = Instance.new("BillboardGui")
-				bill.Name = oreESP.billName
-				bill.Size = UDim2.fromOffset(160, 24)
-				bill.AlwaysOnTop = true
-				bill.Adornee = item.anchor
-				bill.StudsOffset = Vector3.new(0, 3.2, 0)
-				bill.MaxDistance = maxDist
-
-				local lbl = Instance.new("TextLabel")
-				lbl.Size = UDim2.fromScale(1, 1)
-				lbl.BackgroundTransparency = 1
-				lbl.TextColor3 = item.color
-				lbl.TextStrokeTransparency = 0.4
-				lbl.Font = Enum.Font.Gotham
-				lbl.TextSize = 15
-				lbl.Text = item.oreName
-				lbl.Parent = bill
-
-				bill.Enabled = true
-				bill.Parent = container
-				entry.bill = bill
-				entry.lbl = lbl
-			else
-				if entry.bill.Adornee ~= item.anchor then
-					entry.bill.Adornee = item.anchor
-				end
-				if entry.bill.MaxDistance ~= maxDist then
-					entry.bill.MaxDistance = maxDist
-				end
-				if not entry.bill.Enabled then
-					entry.bill.Enabled = true
-				end
-			end
-		elseif entry.bill and entry.bill.Enabled then
-			entry.bill.Enabled = false
 		end
 	end
 
@@ -13153,7 +12955,7 @@ local function oreESPLoop()
 				hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 				hl.Adornee = item.obj
 				hl.Enabled = true
-				hl.Parent = container
+				hl.Parent = workspace
 				entry.hl = hl
 			elseif not entry.hl.Enabled then
 				entry.hl.Enabled = true
@@ -14316,22 +14118,20 @@ do
 			disconnect("RemoveParticles_Lighting")
 
 			if state then
-				-- Walk workspace & lighting iteratively in chunks so toggling never hitches on GetDescendants().
+				-- Process workspace & lighting smoothly in chunks without freeze/stutter
 				task.spawn(function()
-					local stack = { workspace, game:GetService("Lighting") }
-					local processed = 0
-					while #stack > 0 do
-						if not (Toggles.RemoveParticles and Toggles.RemoveParticles.Value) then break end
-						local node = table.remove(stack)
-						for _, child in ipairs(node:GetChildren()) do
-							if PARTICLE_CLASSES[child.ClassName] then
-								disableParticle(child)
+					local containers = { workspace, game:GetService("Lighting") }
+					for _, container in ipairs(containers) do
+						local descendants = container:GetDescendants()
+						for i = 1, #descendants do
+							if not (Toggles.RemoveParticles and Toggles.RemoveParticles.Value) then break end
+							local v = descendants[i]
+							if v and v.Parent and PARTICLE_CLASSES[v.ClassName] then
+								disableParticle(v)
 							end
-							stack[#stack + 1] = child
-						end
-						processed = processed + 1
-						if processed % 300 == 0 then
-							task.wait()
+							if i % 300 == 0 then
+								task.wait()
+							end
 						end
 					end
 				end)
@@ -14550,15 +14350,11 @@ TSG_AntiLagGroup:AddCheckbox("PingSpoofer", {
 				for _, v in pairs(game.CoreGui.RobloxGui.PerformanceStats:GetChildren()) do
 					if v.Name == "PS_Button" and v.StatsMiniTextPanelClass.TitleLabel.Text == "Ping" then
 						local memory = v.StatsMiniTextPanelClass.ValueLabel
-						local updating = false
 						memory:GetPropertyChangedSignal("Text"):Connect(function()
-							if updating then return end
 							local active = getgenv().PingSpoofer
 							if active and active.SpoofPing then
-								updating = true
 								local random = math.random(active.StartOfPingSpoofer, active.EndOfPingSpoofer)
 								memory.Text = (random * 1.23) .. " ms"
-								updating = false
 							end
 						end)
 					end
@@ -14728,13 +14524,7 @@ local function getESPFolder()
 	return espFolder or workspace
 end
 
-TSG_ESPCharConns = TSG_ESPCharConns or {}
-
 local function removePlayerESP(player)
-	if TSG_ESPCharConns[player] then
-		pcall(function() TSG_ESPCharConns[player]:Disconnect() end)
-		TSG_ESPCharConns[player] = nil
-	end
 	local entry = espObjects[player]
 	if entry then
 		if entry.billboard then pcall(function() entry.billboard:Destroy() end) end
@@ -14746,12 +14536,6 @@ local function removePlayerESP(player)
 end
 
 local function clearESP()
-	for player in pairs(TSG_ESPCharConns) do
-		if TSG_ESPCharConns[player] then
-			pcall(function() TSG_ESPCharConns[player]:Disconnect() end)
-			TSG_ESPCharConns[player] = nil
-		end
-	end
 	for player in pairs(espObjects) do
 		removePlayerESP(player)
 	end
@@ -14969,7 +14753,6 @@ local function updateAllESP()
 	local showHpText = (Toggles and Toggles.ShowHealthText and Toggles.ShowHealthText.Value) or false
 	local outlineEnabled = (Toggles.OutlineESP and Toggles.OutlineESP.Value) or false
 	local boxEnabled = (Toggles and Toggles.BoxESP and Toggles.BoxESP.Value) or false
-	local camera = boxEnabled and workspace.CurrentCamera or nil
 
 	for _, player in ipairs(espPlayerList) do
 		if player ~= LocalPlayer then
@@ -15015,6 +14798,7 @@ local function updateAllESP()
 						entry.box = createBoxDrawing()
 					end
 					local box = entry.box
+					local camera = workspace.CurrentCamera
 					if box then
 						if camera and inRange then
 							local top = camera:WorldToViewportPoint(entry.root.Position + Vector3.new(0, 3, 0))
@@ -15137,8 +14921,9 @@ Toggles.PlayerESP:OnChanged(function()
 
 	for _, player in ipairs(espPlayerList) do
 		if player ~= LocalPlayer then
-			if TSG_ESPCharConns[player] then TSG_ESPCharConns[player]:Disconnect() end
-			TSG_ESPCharConns[player] = player.CharacterAdded:Connect(function()
+			local entry = espObjects[player] or {}
+			if entry.charCon then entry.charCon:Disconnect() end
+			entry.charCon = player.CharacterAdded:Connect(function()
 				task.wait(0.2)
 				if Toggles.PlayerESP and Toggles.PlayerESP.Value then
 					getOrCreateESP(player)
@@ -15149,8 +14934,7 @@ Toggles.PlayerESP:OnChanged(function()
 
 	track("ESP_PlayerAdded", Players.PlayerAdded:Connect(function(player)
 		refreshESPPlayerList()
-		if TSG_ESPCharConns[player] then TSG_ESPCharConns[player]:Disconnect() end
-		TSG_ESPCharConns[player] = player.CharacterAdded:Connect(function()
+		player.CharacterAdded:Connect(function()
 			task.wait(0.2)
 			if Toggles.PlayerESP and Toggles.PlayerESP.Value then
 				getOrCreateESP(player)
@@ -15250,15 +15034,9 @@ do
 		for _, player in ipairs(TSG_PlayerList) do
 			if player ~= LocalPlayer then
 				local char = player.Character
+				local root = char and char:FindFirstChild("HumanoidRootPart")
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
 				local entry = speedESPs[player]
-				local root, hum
-				if entry and entry.char == char and entry.root and entry.root.Parent and entry.hum then
-					root = entry.root
-					hum = entry.hum
-				else
-					root = char and char:FindFirstChild("HumanoidRootPart")
-					hum = char and char:FindFirstChildOfClass("Humanoid")
-				end
 
 				if not root or not hum or hum.Health <= 0 or not char.Parent then
 					if entry and entry.billboard.Enabled then
@@ -15270,11 +15048,6 @@ do
 					if not entry or entry.root ~= root or not entry.billboard.Parent then
 						destroySpeedEntry(player)
 						entry = createSpeedEntry(player, root)
-						entry.char = char
-						entry.hum = hum
-					else
-						entry.char = char
-						entry.hum = hum
 					end
 
 					local dist = myPos and (root.Position - myPos).Magnitude or 0
@@ -15521,11 +15294,9 @@ do
 
 	local function updateBossESP()
 		local now = tick()
-		if not (Connections["BossESP_Added_AI_Server"] and Connections["BossESP_Added_AI_Client"]) then
-			if now - bossLastRefresh >= 1 then
-				bossLastRefresh = now
-				refreshBossHooks()
-			end
+		if now - bossLastRefresh >= 1 then
+			bossLastRefresh = now
+			refreshBossHooks()
 		end
 
 		-- Nothing tracked: one lookup and out. This is the usual case, so the
@@ -15840,13 +15611,13 @@ function TSG_BuildWeatherGrid(config)
 	end
 
 	local lastCellPos = nil
-	local moveThreshold = math.max(2, config.Cell * 0.5)
 	WeatherOverrideConnection = RunService.RenderStepped:Connect(function()
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local base = camera.CFrame.Position
-		-- Only rewrite the cells when the camera moves significantly, cutting ~49 CFrame writes/frame.
-		if lastCellPos and (base - lastCellPos).Magnitude < moveThreshold then return end
+		-- Only rewrite the cells when the camera actually moved. Standing still
+		-- (common on mobile) then costs nothing instead of ~49 CFrame writes a frame.
+		if lastCellPos and (base - lastCellPos).Magnitude < 0.25 then return end
 		lastCellPos = base
 		for _, cell in ipairs(cells) do
 			cell.Part.CFrame = CFrame.new(base.X + cell.X, base.Y + config.Offset, base.Z + cell.Z)
@@ -15925,9 +15696,9 @@ local function applyClearWeather(state)
 		local function disableWeatherParticles(parent)
 			if not parent then return end
 			for _, obj in ipairs(parent:GetDescendants()) do
-				if obj.ClassName == "ParticleEmitter" then
+				if obj:IsA("ParticleEmitter") then
 					local name = obj.Name:lower()
-					if name:find("rain", 1, true) or name:find("snow", 1, true) or name:find("storm", 1, true) or name:find("fog", 1, true) or name:find("cloud", 1, true) or name:find("weather", 1, true) or name:find("drop", 1, true) then
+					if name:find("rain") or name:find("snow") or name:find("storm") or name:find("fog") or name:find("cloud") or name:find("weather") or name:find("drop") then
 						pcall(function() obj.Enabled = false end)
 					end
 				end
@@ -15941,9 +15712,9 @@ local function applyClearWeather(state)
 
 		disconnect("ClearWeather_DescendantAdded")
 		track("ClearWeather_DescendantAdded", workspace.DescendantAdded:Connect(function(desc)
-			if Toggles.ClearWeather and Toggles.ClearWeather.Value and desc.ClassName == "ParticleEmitter" then
+			if Toggles.ClearWeather and Toggles.ClearWeather.Value and desc:IsA("ParticleEmitter") then
 				local name = desc.Name:lower()
-				if name:find("rain", 1, true) or name:find("snow", 1, true) or name:find("storm", 1, true) or name:find("fog", 1, true) or name:find("cloud", 1, true) or name:find("weather", 1, true) or name:find("drop", 1, true) then
+				if name:find("rain") or name:find("snow") or name:find("storm") or name:find("fog") or name:find("cloud") or name:find("weather") or name:find("drop") then
 					pcall(function() desc.Enabled = false end)
 				end
 			end
@@ -16191,24 +15962,15 @@ task.spawn(updateCamlockPlayerList)
 local function startAttach()
 	disconnect("AttachLoop")
 	if Toggles.AttachToggle.Value then
-		local cachedName, cachedPlayer, cachedChar, cachedRoot = nil, nil, nil, nil
 		track("AttachLoop", RunService.Heartbeat:Connect(function()
 			if not Toggles.AttachToggle.Value then return end
 			local targetName = Options.AttachPlayerList.Value
 			if not targetName or targetName == "" then return end
 
-			if targetName ~= cachedName or not cachedPlayer or not cachedPlayer.Parent then
-				cachedName = targetName
-				cachedPlayer = Players:FindFirstChild(targetName)
-				cachedChar = nil
-				cachedRoot = nil
-			end
-			local targetChar = cachedPlayer and cachedPlayer.Character
-			if targetChar ~= cachedChar or not cachedRoot or not cachedRoot.Parent then
-				cachedChar = targetChar
-				cachedRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-			end
-			local targetRoot = cachedRoot
+			local targetPlayer = Players:FindFirstChild(targetName)
+			local targetChar = targetPlayer and targetPlayer.Character
+			local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+			local char = getCharacter()
 			local myRoot = getRootPart()
 
 			if targetRoot and myRoot and isAlive() then
@@ -16226,7 +15988,7 @@ local function startAttach()
 				else
 					myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, attachDist) -- Behind player
 				end
-				myRoot.AssemblyLinearVelocity = Vector3.zero
+				myRoot.Velocity = Vector3.zero
 			end
 		end))
 	end
@@ -16313,23 +16075,12 @@ task.spawn(updateSpectatePlayerList)
 local function startSpectate()
 	disconnect("SpectateLoop")
 	if Toggles.SpectateToggle.Value then
-		local cachedName, cachedPlayer, cachedChar, cachedHum = nil, nil, nil, nil
 		track("SpectateLoop", RunService.Heartbeat:Connect(function()
 			if not Toggles.SpectateToggle.Value then return end
 
 			local targetName = Options.SpectatePlayerList.Value
-			if targetName ~= cachedName or not cachedPlayer or not cachedPlayer.Parent then
-				cachedName = targetName
-				cachedPlayer = targetName and Players:FindFirstChild(targetName) or nil
-				cachedChar = nil
-				cachedHum = nil
-			end
-			local targetChar = cachedPlayer and cachedPlayer.Character
-			if targetChar ~= cachedChar or not cachedHum or not cachedHum.Parent then
-				cachedChar = targetChar
-				cachedHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid") or nil
-			end
-			local targetHum = cachedHum
+			local targetPlayer = targetName and Players:FindFirstChild(targetName)
+			local targetHum = targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChildOfClass("Humanoid")
 			local camera = workspace.CurrentCamera
 
 			if targetHum then
@@ -16402,7 +16153,7 @@ end
 function getMoveVector()
 	local controls = FreecamState.controls
 	if controls then
-		local ok, v = pcall(controls.GetMoveVector, controls)
+		local ok, v = pcall(function() return controls:GetMoveVector() end)
 		if ok and typeof(v) == "Vector3" and v.Magnitude > 0 then
 			return v
 		end
@@ -16413,14 +16164,10 @@ end
 -- The default mobile joystick sits under PlayerGui.TouchGui. Touches that start
 -- there are movement, not camera, so they must not swing the view.
 function isJoystickTouch(position)
-	local frame = FreecamState.thumbstickFrame
-	if not frame or not frame.Parent then
-		local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-		local touchGui = playerGui and playerGui:FindFirstChild("TouchGui")
-		if not touchGui then return false end
-		frame = touchGui:FindFirstChild("ThumbstickFrame", true)
-		FreecamState.thumbstickFrame = frame
-	end
+	local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+	local touchGui = playerGui and playerGui:FindFirstChild("TouchGui")
+	if not touchGui then return false end
+	local frame = touchGui:FindFirstChild("ThumbstickFrame", true)
 	if not frame then return false end
 	local topLeft = frame.AbsolutePosition
 	local size = frame.AbsoluteSize
@@ -16684,32 +16431,17 @@ local function onInvisibleFlyToggle(state)
 				end)
 			end
 
-			local cloneRoot = invisibleFlyVars.playerClone:FindFirstChild("HumanoidRootPart")
-			if cloneRoot then
-				cloneRoot.Anchored = true
-			end
-			local lastFill = Options.InvisibleFlyFillColor.Value
-			local lastOutline = Options.InvisibleFlyOutlineColor.Value
-
 			while invisibleFlyVars.invisiblefly do
 				RunService.Heartbeat:Wait()
 
-				if not (invisibleFlyVars.playerClone and cloneRoot and cloneRoot.Parent) then
+				if not (invisibleFlyVars.playerClone and invisibleFlyVars.playerClone:FindFirstChild("HumanoidRootPart")) then
 					break
 				end
-
-				-- Only update Highlight colors when they actually changed.
+				
+				-- Update highlight colors in real-time
 				if invisibleFlyVars.highlight then
-					local fill = Options.InvisibleFlyFillColor.Value
-					local outline = Options.InvisibleFlyOutlineColor.Value
-					if fill ~= lastFill then
-						lastFill = fill
-						invisibleFlyVars.highlight.FillColor = fill
-					end
-					if outline ~= lastOutline then
-						lastOutline = outline
-						invisibleFlyVars.highlight.OutlineColor = outline
-					end
+					invisibleFlyVars.highlight.FillColor = Options.InvisibleFlyFillColor.Value
+					invisibleFlyVars.highlight.OutlineColor = Options.InvisibleFlyOutlineColor.Value
 				end
 
 				local root = getRootPart()
@@ -16720,28 +16452,37 @@ local function onInvisibleFlyToggle(state)
 				end
 
 				invisibleFlyVars.didFly = true
-				local cam = workspace.CurrentCamera
-				local targetSubj = cloneHum or hum
-				if cam.CameraSubject ~= targetSubj then
-					cam.CameraSubject = targetSubj
-				end
+				workspace.CurrentCamera.CameraSubject = invisibleFlyVars.playerClone:FindFirstChild("Humanoid") or hum
 				hum:ChangeState("Climbing")
 				LocalPlayer.Character:PivotTo(invisibleFlyVars.playerClone:GetPivot() + Vector3.new(0, 500, 0))
-				root.AssemblyLinearVelocity = Vector3.zero
+				root.Velocity = Vector3.zero
 
-				local camCF = cam.CFrame
-				local lookPosition = camCF.Position + camCF.LookVector * 9999
-				local nextPos = cloneRoot.Position + hum.MoveDirection / 10 * Options.InvisibleFlySpeedSlider.Value
-				if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-					nextPos = nextPos + Vector3.new(0, 0.2, 0)
-				end
-				if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-					nextPos = nextPos - Vector3.new(0, 0.2, 0)
-				end
-				cloneRoot.CFrame = CFrame.new(
-					nextPos,
-					Vector3.new(lookPosition.X, nextPos.Y, lookPosition.Z)
+				local lookPosition = workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 9999
+
+				invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
+					invisibleFlyVars.playerClone.HumanoidRootPart.Position,
+					Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
 				)
+				invisibleFlyVars.playerClone.HumanoidRootPart.Anchored = true
+
+				invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
+					invisibleFlyVars.playerClone.HumanoidRootPart.Position + hum.MoveDirection / 10 * Options.InvisibleFlySpeedSlider.Value,
+					Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
+				)
+
+				if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+					invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
+						invisibleFlyVars.playerClone.HumanoidRootPart.Position + Vector3.new(0, 0.2, 0),
+						Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
+					)
+				end
+
+				if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+					invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
+						invisibleFlyVars.playerClone.HumanoidRootPart.Position - Vector3.new(0, 0.2, 0),
+						Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
+					)
+				end
 			end
 
 			-- Land the body back where the clone was, then clear it, so turning the
@@ -16803,7 +16544,6 @@ end
 
 Toggles.QuickVanish:OnChanged(function()
 	disconnect("QuickVanish")
-	disconnect("QuickVanish_CharAdded")
 	quickVanishTriggered = false
 	local qvVisible = Toggles.QuickVanish.Value
 	if Options.QuickVanishThreshold then
@@ -16819,19 +16559,7 @@ Toggles.QuickVanish:OnChanged(function()
 		pcall(function() PlayerTabBox:Resize() end)
 	end
 	if Toggles.QuickVanish.Value then
-		local function hookQuickVanishChar(char)
-			disconnect("QuickVanish")
-			if not char then return end
-			local hum = char:WaitForChild("Humanoid", 5)
-			if hum and Toggles.QuickVanish and Toggles.QuickVanish.Value then
-				track("QuickVanish", hum.HealthChanged:Connect(checkQuickVanish))
-				checkQuickVanish()
-			end
-		end
-		if LocalPlayer.Character then
-			task.spawn(hookQuickVanishChar, LocalPlayer.Character)
-		end
-		track("QuickVanish_CharAdded", LocalPlayer.CharacterAdded:Connect(hookQuickVanishChar))
+		track("QuickVanish", RunService.Heartbeat:Connect(checkQuickVanish))
 		Library:Notify({ Title = "Quick Vanish", Description = "Enabled", Time = 2 })
 	else
 		Library:Notify({ Title = "Quick Vanish", Description = "Disabled", Time = 2 })
