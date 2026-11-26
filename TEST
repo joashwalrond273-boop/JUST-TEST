@@ -6761,6 +6761,14 @@ CombatReach:AddToggle("Reach", {
 	Default = false,
 })
 
+-- Melee counterpart of Bullet Teleport: a normal swing fires the game's melee
+-- remote at every valid target anywhere on the map, ignoring Reach Range and
+-- Hitbox Angle. Reach itself is left untouched.
+CombatReach:AddToggle("ReachMeleeTeleport", {
+	Text = "Melee Teleport",
+	Default = false,
+})
+
 CombatReach:AddDropdown("ReachTarget", {
 	Text = "Target Player",
 	Values = {"All"},
@@ -8897,8 +8905,12 @@ end)
 local function connectReachTool(tool)
 	disconnect("ReachToolConn")
 	track("ReachToolConn", tool.Activated:Connect(function()
-		if Toggles.Reach.Value then
-			local range = Options.ReachRange.Value
+		-- Melee Teleport reuses the same melee remote as Reach but drops the
+		-- distance and cone limits, so a swing lands on players anywhere on the
+		-- map -- the melee counterpart of Bullet Teleport.
+		local meleeTeleport = Toggles.ReachMeleeTeleport and Toggles.ReachMeleeTeleport.Value
+		if Toggles.Reach.Value or meleeTeleport then
+			local range = meleeTeleport and math.huge or Options.ReachRange.Value
 			local maxAngle = (Options.ReachAngle and Options.ReachAngle.Value) or 35
 			local coneThreshold = math.cos(math.rad(maxAngle / 2))
 			local root = getRootPart()
@@ -8911,6 +8923,7 @@ local function connectReachTool(tool)
 				local reachTargetSetting = (Options.ReachTarget and Options.ReachTarget.Value) or "All"
 
 				local function passesAngleCheck(targetPos)
+					if meleeTeleport then return true end
 					local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
 					if dir.Magnitude <= 0 then return true end
 					return forward:Dot(dir.Unit) >= coneThreshold
