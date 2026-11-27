@@ -18663,64 +18663,6 @@ function TSG_ApplyBackgroundColorTransparency(alpha)
 	end
 end
 
--- UI sounds: a hover blip and a click blip wired to every button in the UI (including
--- buttons created later), so the whole menu gives feedback. Globals again, to stay
--- inside the 200-local budget.
-TSG_SoundsEnabled = TSG_SoundsEnabled ~= false
-TSG_HoverSoundId = TSG_HoverSoundId or "rbxasset://sounds/electronicpingshort.wav"
-TSG_ClickSoundId = TSG_ClickSoundId or "rbxasset://sounds/switch.wav"
-TSG_SoundService = TSG_SoundService or game:GetService("SoundService")
-
--- Plays a one-shot 2D sound. A fresh Sound is cloned per play so rapid hovers/clicks
--- do not cut each other off, and it destroys itself when finished.
-function TSG_PlayUISound(soundId, volume)
-	if not TSG_SoundsEnabled then
-		return
-	end
-
-	local sound = Instance.new("Sound")
-	sound.SoundId = soundId
-	sound.Volume = volume
-	sound.Parent = TSG_SoundService
-	sound:Play()
-	sound.Ended:Once(function()
-		sound:Destroy()
-	end)
-end
-
--- Hooks a single button for hover/click sounds. The attribute guards against hooking
--- the same button twice (the library reuses and reparents instances).
-function TSG_HookUIButton(guiObject)
-	if not guiObject:IsA("GuiButton") or guiObject:GetAttribute("TSG_SoundHook") then
-		return
-	end
-	guiObject:SetAttribute("TSG_SoundHook", true)
-
-	guiObject.MouseEnter:Connect(function()
-		TSG_PlayUISound(TSG_HoverSoundId, 0.2)
-	end)
-	guiObject.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			TSG_PlayUISound(TSG_ClickSoundId, 0.35)
-		end
-	end)
-end
-
--- Hooks everything in the UI once it has been built, and keeps hooking anything the
--- library creates afterwards (dropdown options, tooltips, new tabs, ...).
-function TSG_SetupUISounds()
-	local screenGui = Library.ScreenGui
-	if not screenGui then
-		return
-	end
-
-	for _, descendant in ipairs(screenGui:GetDescendants()) do
-		TSG_HookUIButton(descendant)
-	end
-
-	screenGui.DescendantAdded:Connect(TSG_HookUIButton)
-end
-
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("MENU", "wrench")
 
 MenuGroup:AddToggle("KeybindMenuOpen", {
@@ -18800,14 +18742,6 @@ MenuGroup:AddSlider("UIBackgroundColorTransparency", {
 	end
 })
 
-MenuGroup:AddToggle("UISounds", {
-	Text = "UI Sounds",
-	Default = true,
-	Callback = function(value)
-		TSG_SoundsEnabled = value
-	end,
-})
-
 MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
 	Default = "RightShift",
 	NoUI = true,
@@ -18824,7 +18758,7 @@ ThemeManager:SetLibrary(Library)
 -- Set default color scheme
 ThemeManager:SetDefaultTheme({
 	AccentColor = "18e0e0", -- RGB(24, 224, 224)
-	OutlineColor = "193338", -- RGB(25, 51, 56)
+	OutlineColor = "0b2024", -- RGB(11, 32, 36)
 	MainColor = "1a2a34", -- RGB(26, 42, 52)
 	BackgroundColor = "16232a", -- RGB(22, 35, 42)
 	FontColor = "d8dde9", -- RGB(216, 221, 233)
@@ -18845,11 +18779,6 @@ SaveManager:LoadAutoloadConfig()
 -- config, if any, has already overridden the slider values).
 TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
 TSG_ApplyBackgroundColorTransparency(Options.UIBackgroundColorTransparency.Value / 100)
-
--- Start the UI sound hooks now that the whole menu exists. The toggle's saved value
--- (if any) has already run its Callback by this point, but sync it again just in case.
-TSG_SoundsEnabled = Options.UISounds.Value
-TSG_SetupUISounds()
 
 Library:OnUnload(function()
 	if Toggles.Reach and Toggles.Reach.Value then
