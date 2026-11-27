@@ -19,43 +19,32 @@ local LocalPlayer = Players.LocalPlayer
 local joinLowPingServer
 
 -- Obsidian
-local repo = "https://raw.githubusercontent.com/joashwalrond273-boop/UI-JUST/refs/heads/main/JUST/"
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 
--- Loads an Obsidian source file. The repository copy is always fetched so the
--- latest version is used on every run; the previously fetched source is only
--- kept as an offline fallback in the executor's workspace ("Obsidian/...").
--- The fetched source is cached to disk (when writefile exists) for that.
+-- Loads an Obsidian source file. Prefers the editable local copy in the
+-- executor's workspace ("Obsidian/...") so the UI can be customised without a
+-- network fetch. If the local file is missing it fetches from GitHub, caches it
+-- to disk (when writefile exists) for next time, and falls back gracefully on
+-- executors without readfile.
 local function loadObsidian(relPath)
 	local localPath = "Obsidian/" .. relPath
-
-	local remoteOk, remoteResult = pcall(function()
-		local source = game:HttpGet(repo .. relPath)
-		assert(typeof(source) == "string" and source ~= "", "empty response")
-
-		pcall(function()
-			if makefolder then
-				pcall(makefolder, "Obsidian")
-				pcall(makefolder, "Obsidian/addons")
-			end
-			if writefile then
-				writefile(localPath, source)
-			end
-		end)
-
-		return loadstring(source)()
-	end)
-	if remoteOk and remoteResult ~= nil then
-		return remoteResult
-	end
-
-	local cacheOk, cacheResult = pcall(function()
+	local ok, result = pcall(function()
 		return loadstring(readfile(localPath))()
 	end)
-	if cacheOk and cacheResult ~= nil then
-		return cacheResult
+	if ok and result ~= nil then
+		return result
 	end
-
-	error(string.format("Could not load %s from %s", relPath, repo .. relPath))
+	local source = game:HttpGet(repo .. relPath)
+	pcall(function()
+		if makefolder then
+			pcall(makefolder, "Obsidian")
+			pcall(makefolder, "Obsidian/addons")
+		end
+		if writefile then
+			writefile(localPath, source)
+		end
+	end)
+	return loadstring(source)()
 end
 
 local Library = loadObsidian("Library.lua")
@@ -18729,7 +18718,7 @@ MenuGroup:AddSlider("UICornerSlider", {
 
 MenuGroup:AddSlider("UIBackgroundTransparency", {
 	Text = "UI Transparency",
-	Default = 10,
+	Default = 25,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18742,7 +18731,7 @@ MenuGroup:AddSlider("UIBackgroundTransparency", {
 
 MenuGroup:AddSlider("UIBackgroundColorTransparency", {
 	Text = "Background Color Transparency",
-	Default = 30,
+	Default = 10,
 	Min = 0,
 	Max = 100,
 	Rounding = 0,
@@ -18770,7 +18759,7 @@ ThemeManager:SetLibrary(Library)
 ThemeManager:SetDefaultTheme({
 	AccentColor = "18e0e0", -- RGB(24, 224, 224)
 	OutlineColor = "0b2024", -- RGB(11, 32, 36)
-	MainColor = "1a2a34", -- RGB(26, 42, 52)
+	MainColor = "1a2a34", -- RGB(28, 43, 54)
 	BackgroundColor = "16232a", -- RGB(22, 35, 42)
 	FontColor = "d8dde9", -- RGB(216, 221, 233)
 	FontFace = "Jura" -- default font face (was Code)
