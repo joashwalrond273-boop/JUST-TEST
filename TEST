@@ -19,17 +19,14 @@ local LocalPlayer = Players.LocalPlayer
 local joinLowPingServer
 
 -- Obsidian
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-
--- Library.lua is served from its own repository.
-local libraryRepo = "https://raw.githubusercontent.com/joashwalrond273-boop/UI-JUST/refs/heads/main/JUST"
+local repo = "https://raw.githubusercontent.com/joashwalrond273-boop/UI-JUST/refs/heads/main/JUST/"
 
 -- Loads an Obsidian source file. Prefers the editable local copy in the
 -- executor's workspace ("Obsidian/...") so the UI can be customised without a
 -- network fetch. If the local file is missing it fetches from GitHub, caches it
 -- to disk (when writefile exists) for next time, and falls back gracefully on
 -- executors without readfile.
-local function loadObsidian(relPath, remoteURL)
+local function loadObsidian(relPath)
 	local localPath = "Obsidian/" .. relPath
 	local ok, result = pcall(function()
 		return loadstring(readfile(localPath))()
@@ -37,7 +34,7 @@ local function loadObsidian(relPath, remoteURL)
 	if ok and result ~= nil then
 		return result
 	end
-	local source = game:HttpGet(remoteURL or (repo .. relPath))
+	local source = game:HttpGet(repo .. relPath)
 	pcall(function()
 		if makefolder then
 			pcall(makefolder, "Obsidian")
@@ -50,7 +47,7 @@ local function loadObsidian(relPath, remoteURL)
 	return loadstring(source)()
 end
 
-local Library = loadObsidian("Library.lua", libraryRepo)
+local Library = loadObsidian("Library.lua")
 getgenv().TSG_UNLOAD = function()
     pcall(function()
 		Library:Unload()
