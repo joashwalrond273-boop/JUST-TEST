@@ -18619,7 +18619,8 @@ function TSG_ApplyInstanceTransparency(instance, target)
 	instance.BackgroundTransparency = original + (1 - original) * target
 end
 
--- "UI Transparency": fades the window backdrop itself.
+-- "UI Transparency": fades the window backdrop itself, including the tab-content
+-- frame that sits behind the groupboxes.
 function TSG_ApplyUIBackgroundTransparency(alpha)
 	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
 
@@ -18629,6 +18630,12 @@ function TSG_ApplyUIBackgroundTransparency(alpha)
 	end
 
 	TSG_ApplyInstanceTransparency(mainFrame, alpha)
+
+	-- The frame behind the groupboxes is drawn on top of MainFrame, so a plain alpha
+	-- there would still let the window colour show through it and it would keep looking
+	-- solid. It gets the same compounded alpha as the panels so the backdrop behind the
+	-- groupboxes fades along with the rest of the window.
+	TSG_ApplyInstanceTransparency(Library.WindowContainer, 1 - (1 - alpha) ^ 8)
 end
 
 -- "Background Color Transparency": fades everything painted with the library's
@@ -18654,6 +18661,64 @@ function TSG_ApplyBackgroundColorTransparency(alpha)
 			end
 		end
 	end
+end
+
+-- UI sounds: a hover blip and a click blip wired to every button in the UI (including
+-- buttons created later), so the whole menu gives feedback. Globals again, to stay
+-- inside the 200-local budget.
+TSG_SoundsEnabled = TSG_SoundsEnabled ~= false
+TSG_HoverSoundId = TSG_HoverSoundId or "rbxasset://sounds/electronicpingshort.wav"
+TSG_ClickSoundId = TSG_ClickSoundId or "rbxasset://sounds/switch.wav"
+TSG_SoundService = TSG_SoundService or game:GetService("SoundService")
+
+-- Plays a one-shot 2D sound. A fresh Sound is cloned per play so rapid hovers/clicks
+-- do not cut each other off, and it destroys itself when finished.
+function TSG_PlayUISound(soundId, volume)
+	if not TSG_SoundsEnabled then
+		return
+	end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = soundId
+	sound.Volume = volume
+	sound.Parent = TSG_SoundService
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+end
+
+-- Hooks a single button for hover/click sounds. The attribute guards against hooking
+-- the same button twice (the library reuses and reparents instances).
+function TSG_HookUIButton(guiObject)
+	if not guiObject:IsA("GuiButton") or guiObject:GetAttribute("TSG_SoundHook") then
+		return
+	end
+	guiObject:SetAttribute("TSG_SoundHook", true)
+
+	guiObject.MouseEnter:Connect(function()
+		TSG_PlayUISound(TSG_HoverSoundId, 0.2)
+	end)
+	guiObject.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			TSG_PlayUISound(TSG_ClickSoundId, 0.35)
+		end
+	end)
+end
+
+-- Hooks everything in the UI once it has been built, and keeps hooking anything the
+-- library creates afterwards (dropdown options, tooltips, new tabs, ...).
+function TSG_SetupUISounds()
+	local screenGui = Library.ScreenGui
+	if not screenGui then
+		return
+	end
+
+	for _, descendant in ipairs(screenGui:GetDescendants()) do
+		TSG_HookUIButton(descendant)
+	end
+
+	screenGui.DescendantAdded:Connect(TSG_HookUIButton)
 end
 
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("MENU", "wrench")
@@ -18735,6 +18800,14 @@ MenuGroup:AddSlider("UIBackgroundColorTransparency", {
 	end
 })
 
+MenuGroup:AddToggle("UISounds", {
+	Text = "UI Sounds",
+	Default = true,
+	Callback = function(value)
+		TSG_SoundsEnabled = value
+	end,
+})
+
 MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
 	Default = "RightShift",
 	NoUI = true,
@@ -18772,6 +18845,11 @@ SaveManager:LoadAutoloadConfig()
 -- config, if any, has already overridden the slider values).
 TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
 TSG_ApplyBackgroundColorTransparency(Options.UIBackgroundColorTransparency.Value / 100)
+
+-- Start the UI sound hooks now that the whole menu exists. The toggle's saved value
+-- (if any) has already run its Callback by this point, but sync it again just in case.
+TSG_SoundsEnabled = Options.UISounds.Value
+TSG_SetupUISounds()
 
 Library:OnUnload(function()
 	if Toggles.Reach and Toggles.Reach.Value then
