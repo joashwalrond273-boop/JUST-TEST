@@ -53,1193 +53,40 @@ getgenv().TSG_UNLOAD = function()
 		Library:Unload()
 	end)
 end
--- ThemeManager (Obsidian addon) -- embedded raw source (previously loaded via loadstring)
-local ThemeManager = (function()
-local cloneref = (cloneref or clonereference or function(instance: any)
-    return instance
-end)
-local clonefunction = (clonefunction or copyfunction or function(func) 
-    return func 
-end)
-
-local HttpService: HttpService = cloneref(game:GetService("HttpService"))
-
---// Fix is_____ functions for shitsploits, those functions should never error, only return a boolean. (why is this still a problem in the big 2026)
-local isfolder, isfile, listfiles = isfolder, isfile, listfiles
-local isfolder_copy, isfile_copy, listfiles_copy = clonefunction(isfolder), clonefunction(isfile), clonefunction(listfiles)
-local isfolder_success, isfolder_error = pcall(function() return isfolder_copy("test" .. tostring(math.random(1000000, 9999999))) end)
-
-if isfolder_success == false or typeof(isfolder_error) ~= "boolean" then
-    isfolder = function(folder)
-        local success, data = pcall(isfolder_copy, folder)
-        return (if success then data else false)
-    end
-
-    isfile = function(file)
-        local success, data = pcall(isfile_copy, file)
-        return (if success then data else false)
-    end
-
-    listfiles = function(folder)
-        local success, data = pcall(listfiles_copy, folder)
-        return (if success then data else {})
-    end
-end
-
---// WCAG21 constants (https://www.w3.org/TR/WCAG21/#dfn-relative-luminance)
-local ContrastWarnThreshold = 4.5 --// Accessibility: minimum WCAG AA contrast ratio for normal text
-local SrgbLinearThreshold = 0.03928 --// sRGB channel value below which the linear conversion is a simple divide
-local SrgbLinearDivisor = 12.92 --// Divisor used for channel values below SrgbLinearThreshold
-local SrgbGammaOffset = 0.055 --// Offset applied before the gamma expansion power curve
-local SrgbGammaScale = 1.055 --// Scale applied before the gamma expansion power curve
-local SrgbGammaExponent = 2.4 --// Exponent for the gamma expansion power curve
-local LuminanceRedWeight,
-      LuminanceGreenWeight,
-      LuminanceBlueWeight = 0.2126, 0.7152, 0.0722 --// R, G, B channel weights in the relative luminance formula
-local ContrastRatioOffset = 0.05 --// Offset added to both luminances when computing a contrast ratio
-
---// Theme Manager
-local SchemeIndexes = { "FontColor", "MainColor", "AccentColor", "BackgroundColor", "OutlineColor" }
-
-local ThemeManager = {
-    Library = nil,
-
-    Folder = "ObsidianLibSettings",
-
-    AppliedToTab = false,
-    DefaultThemeName = nil,
-
-    --// Accessibility: contrast warning state
-    ContrastLabel = nil,
-    ContrastWasPoor = false,
-
-    BuiltInThemes = {
-        ["Default"] = {
-            1,
-            { FontColor = "ffffff", MainColor = "191919", AccentColor = "7d55ff", BackgroundColor = "0f0f0f", OutlineColor = "282828", BackgroundImage = "" },
-        },
-        ["BBot"] = {
-            2,
-            { FontColor = "ffffff", MainColor = "1e1e1e", AccentColor = "7e48a3", BackgroundColor = "232323", OutlineColor = "141414", BackgroundImage = "" },
-        },
-        ["Fatality"] = {
-            3,
-            { FontColor = "ffffff", MainColor = "1e1842", AccentColor = "c50754", BackgroundColor = "191335", OutlineColor = "3c355d", BackgroundImage = "" },
-        },
-        ["Jester"] = {
-            4,
-            { FontColor = "ffffff", MainColor = "242424", AccentColor = "db4467", BackgroundColor = "1c1c1c", OutlineColor = "373737", BackgroundImage = "" },
-        },
-        ["Mint"] = {
-            5,
-            { FontColor = "ffffff", MainColor = "242424", AccentColor = "3db488", BackgroundColor = "1c1c1c", OutlineColor = "373737", BackgroundImage = "" },
-        },
-        ["Tokyo Night"] = {
-            6,
-            { FontColor = "ffffff", MainColor = "191925", AccentColor = "6759b3", BackgroundColor = "16161f", OutlineColor = "323232", BackgroundImage = "" },
-        },
-        ["Ubuntu"] = {
-            7,
-            { FontColor = "ffffff", MainColor = "3e3e3e", AccentColor = "e2581e", BackgroundColor = "323232", OutlineColor = "191919", BackgroundImage = "" },
-        },
-        ["Quartz"] = {
-            8,
-            { FontColor = "ffffff", MainColor = "232330", AccentColor = "426e87", BackgroundColor = "1d1b26", OutlineColor = "27232f", BackgroundImage = "" },
-        },
-        ["Nord"] = {
-            9,
-            { FontColor = "eceff4", MainColor = "3b4252", AccentColor = "88c0d0", BackgroundColor = "2e3440", OutlineColor = "4c566a", BackgroundImage = "" },
-        },
-        ["Dracula"] = {
-            10,
-            { FontColor = "f8f8f2", MainColor = "44475a", AccentColor = "ff79c6", BackgroundColor = "282a36", OutlineColor = "6272a4", BackgroundImage = "" },
-        },
-        ["Monokai"] = {
-            11,
-            { FontColor = "f8f8f2", MainColor = "272822", AccentColor = "f92672", BackgroundColor = "1e1f1c", OutlineColor = "49483e", BackgroundImage = "" },
-        },
-        ["Gruvbox"] = {
-            12,
-            { FontColor = "ebdbb2", MainColor = "3c3836", AccentColor = "fb4934", BackgroundColor = "282828", OutlineColor = "504945", BackgroundImage = "" },
-        },
-        ["Solarized"] = {
-            13,
-            { FontColor = "839496", MainColor = "073642", AccentColor = "cb4b16", BackgroundColor = "002b36", OutlineColor = "586e75", BackgroundImage = "" },
-        },
-        ["Catppuccin"] = {
-            14,
-            { FontColor = "d9e0ee", MainColor = "302d41", AccentColor = "f5c2e7", BackgroundColor = "1e1e2e", OutlineColor = "575268", BackgroundImage = "" },
-        },
-        ["One Dark"] = {
-            15,
-            { FontColor = "abb2bf", MainColor = "282c34", AccentColor = "c678dd", BackgroundColor = "21252b", OutlineColor = "5c6370", BackgroundImage = "" },
-        },
-        ["Cyberpunk"] = {
-            16,
-            { FontColor = "f9f9f9", MainColor = "262335", AccentColor = "00ff9f", BackgroundColor = "1a1a2e", OutlineColor = "413c5e", BackgroundImage = "" },
-        },
-        ["Oceanic Next"] = {
-            17,
-            { FontColor = "d8dee9", MainColor = "1b2b34", AccentColor = "6699cc", BackgroundColor = "16232a", OutlineColor = "343d46", BackgroundImage = "" },
-        },
-        ["Material"] = {
-            18,
-            { FontColor = "eeffff", MainColor = "212121", AccentColor = "82aaff", BackgroundColor = "151515", OutlineColor = "424242", BackgroundImage = "" },
-        }
-    }
-}
-
-function ThemeManager:SetLibrary(Library)
-    ThemeManager.Library = Library
-end
-
---// Helpers \\--
-local function Trim(Text: string)
-    return Text:match("^%s*(.-)%s*$")
-end
-
-local function IsStringEmpty(String: string): boolean
-    return if typeof(String) == "string" then Trim(String) == "" else true
-end
-
-local function IsValidFolderPath(Name: string): boolean
-    return typeof(Name) == "string" and (
-        Trim(Name) ~= "" and 
-        not Name:match("^%s*$") and 
-        not Name:find('[<>:"|%?%*%z]')
-    )
-end
-
---// Contrast helpers \\--
-local function LinearizeChannel(Channel: number): number
-    if Channel <= SrgbLinearThreshold then
-        return Channel / SrgbLinearDivisor
-    end
-
-    return ((Channel + SrgbGammaOffset) / SrgbGammaScale) ^ SrgbGammaExponent
-end
-
-local function GetRelativeLuminance(Color: Color3): number
-    local R = LinearizeChannel(Color.R)
-    local G = LinearizeChannel(Color.G)
-    local B = LinearizeChannel(Color.B)
-
-    return LuminanceRedWeight * R + LuminanceGreenWeight * G + LuminanceBlueWeight * B
-end
-
-local function GetContrastRatio(ColorA: Color3, ColorB: Color3): number
-    local LuminanceA = GetRelativeLuminance(ColorA)
-    local LuminanceB = GetRelativeLuminance(ColorB)
-
-    local Lighter = math.max(LuminanceA, LuminanceB)
-    local Darker = math.min(LuminanceA, LuminanceB)
-
-    return (Lighter + ContrastRatioOffset) / (Darker + ContrastRatioOffset)
-end
-
-local function IsValidThemeData(Data: any): boolean
-    if typeof(Data) ~= "table" then
-        return false
-    end
-
-    --// Require the color scheme to be present; font/background image are optional and fall back to current values
-    for _, SchemeIndex in SchemeIndexes do
-        if typeof(Data[SchemeIndex]) ~= "string" then
-            return false
-        end
-    end
-
-    return true
-end
-
---// Folder helper \\--
-local function SplitPath(Path: string): {string}
-	local Result = {}
-	local Current = ""
-
-	for Part in string.gmatch(Path, "[^/]+") do
-		Current = if Current == "" then Part else (Current .. "/" .. Part)
-		table.insert(Result, Current)
-	end
-
-	return Result
-end
-
-local function GetFolderPath(): false | string
-    if IsStringEmpty(ThemeManager.Folder) then
-        return false
-    end
-
-    return string.format("%s/themes", ThemeManager.Folder)
-end
-
-local GetCurrentThemesPath = GetFolderPath
-
---// Files helper \\--
-local function GetThemePath(ThemeName: string): false | string
-    local CurrentThemesPath = GetCurrentThemesPath()
-    return if CurrentThemesPath == false then false else string.format("%s/%s.json", CurrentThemesPath, ThemeName)
-end
-
-local function DoesThemeExist(ThemeName: string, IncludeBuiltIn: boolean): boolean
-    if ThemeManager.BuiltInThemes[ThemeName] then
-        return true
-    end
-
-    local ThemePath = GetThemePath(ThemeName)
-    return if ThemePath == false then false else isfile(ThemePath)
-end
-
-local function GetDefaultThemePath(): false | string
-    local CurrentThemesPath = GetCurrentThemesPath()
-    return if CurrentThemesPath == false then false else string.format("%s/default.txt", CurrentThemesPath)
-end
-
---// Folders \\--
-function ThemeManager:GetPaths(): {string}
-    local FolderPath = GetFolderPath()
-    return if FolderPath == false then {} else SplitPath(FolderPath)
-end
-
-function ThemeManager:BuildFolderTree(SkipWhenCreated: boolean?)
-    local Paths = ThemeManager:GetPaths()
-    if #Paths == 0 then
-        return false
-    end
-
-    if SkipWhenCreated == true then
-        if isfolder(Paths[1]) then
-            return true
-        end
-    end
-
-    for _, Path in Paths do
-        if isfolder(Path) then continue end
-        
-        makefolder(Path)
-    end
-
-    return true
-end
-
-function ThemeManager:CheckFolderTree()
-    return ThemeManager:BuildFolderTree(true)
-end
-
-function ThemeManager:SetFolder(Folder: string)
-    assert(IsValidFolderPath(Folder), "Invalid path provided")
-
-    ThemeManager.Folder = Folder
-    ThemeManager:BuildFolderTree()
-end
-
---// Theme Management \\--
-function ThemeManager:ReloadCustomThemes()
-    local SettingsPath = GetCurrentThemesPath()
-    if SettingsPath == false then
-        return {}
-    end
-
-    pcall(makefolder, SettingsPath)
-    local SuccessList, Files = pcall(listfiles, SettingsPath)
-    if not (SuccessList and typeof(Files) == "table") then
-        ThemeManager.Library:Notify(string.format("Failed to load theme list: %s", tostring(Files)))
-        return {}
-    end
-
-    local FileNames = {}
-    for _, FilePath in Files do
-        local RawFileName = FilePath:match("(.+)%..+$")
-        if not RawFileName then continue end
-
-        local Position = RawFileName:gsub("\\", "/"):find("/[^/]*$")
-        local FileName = Position and RawFileName:sub(Position + 1) or RawFileName
-        if not FileName or FileName == "default" then continue end
-
-        table.insert(FileNames, FileName)
-    end
-
-    return FileNames
-end
-
-function ThemeManager:GetCustomTheme(ThemeName: string): any
-    if IsStringEmpty(ThemeName) then
-        return nil
-    end
-
-    local ThemePath = GetThemePath(ThemeName)
-    if ThemePath == false or not isfile(ThemePath) then
-        return nil
-    end
-
-    local SuccessRead, Content = pcall(readfile, ThemePath)
-    if not SuccessRead then
-        return nil
-    end
-
-    local SuccessDecode, Decoded = pcall(HttpService.JSONDecode, HttpService, Content)
-    if not SuccessDecode or typeof(Decoded) ~= "table" then
-        return nil
-    end
-
-    return Decoded
-end
-
-local function BuildCurrentThemeData(): {[string]: any}
-    local Library = ThemeManager.Library
-    local ThemeData = {
-        FontFace = Library.Options.FontFace.Value,
-        BackgroundImage = Library.Options.BackgroundImage.Value
-    }
-
-    for _, SchemeIndex in SchemeIndexes do
-        ThemeData[SchemeIndex] = Library.Options[SchemeIndex].Value:ToHex()
-    end
-
-    return ThemeData
-end
-
-function ThemeManager:SaveCustomTheme(ThemeName: string): any
-    if IsStringEmpty(ThemeName) then
-        return false, "Invalid theme name provided"
-    end
-
-    if string.lower(ThemeName) == "default" then
-        return false, "Invalid theme name provided"
-    end
-
-    local ThemePath = GetThemePath(ThemeName)
-    if ThemePath == false then
-        return false, "Invalid theme name provided"
-    end
-
-    ThemeManager:CheckFolderTree()
-
-    --// Custom theme files use the same flat shape as an exported theme JSON, so reuse the encoder
-    local EncodedData, SuccessEncode, EncodeErrorMessage = ThemeManager:SaveJSON()
-    if not SuccessEncode then
-        return false, EncodeErrorMessage
-    end
-
-    local SuccessWrite, ErrorMessage = pcall(writefile, ThemePath, EncodedData)
-    if not SuccessWrite then
-        return false, "Failed to write theme file: " .. tostring(ErrorMessage)
-    end
-
-    return true
-end
-
-function ThemeManager:Delete(ThemeName: string): (boolean | string?)
-    if IsStringEmpty(ThemeName) then
-        return false, "No theme is selected"
-    end
-
-    local ThemePath = GetThemePath(ThemeName)
-    if ThemePath == false or not isfile(ThemePath) then
-        return false, "Theme file does not exist"
-    end
-
-    local SuccessDelete, ErrorMessage = pcall(delfile, ThemePath)
-    if not SuccessDelete then
-        return false, "Failed to delete theme file: " .. tostring(ErrorMessage)
-    end
-
-    if ThemeName == ThemeManager.DefaultThemeName then
-        ThemeManager:DeleteDefaultTheme()
-    end
-
-    return true
-end
-
---// Default Theme \\--
-function ThemeManager:GetDefaultTheme(): (string, boolean, string?)
-    ThemeManager:CheckFolderTree()
-
-    local DefaultThemePath = GetDefaultThemePath()
-    if DefaultThemePath == false then
-        return "none", false, "Invalid path provided"
-    end
-
-    if not isfile(DefaultThemePath) then
-        return "none", false, "Default theme is not set"
-    end
-
-    local SuccessRead, DefaultThemeName = pcall(readfile, DefaultThemePath)
-    if not (SuccessRead and typeof(DefaultThemeName) == "string") then
-        return "none", false, DefaultThemeName
-    end
-
-    local ConfigExists = DoesThemeExist(DefaultThemeName, true)
-    if not ConfigExists then
-        return "none", false, "Theme file not found"
-    end
-
-    ThemeManager.DefaultThemeName = DefaultThemeName
-    return DefaultThemeName, true
-end
-
-function ThemeManager:SetDefaultTheme(Theme: any)
-    assert(ThemeManager.Library, "Library is not set, call ThemeManager:SetLibrary(Library) first.")
-    assert(not ThemeManager.AppliedToTab, "Cannot set default theme after applying ThemeManager to a tab!")
-
-    local Library = ThemeManager.Library
-    local DefaultThemeData = ThemeManager.BuiltInThemes["Default"][2]
-
-    local LibraryScheme = {}
-    local FinalTheme = {}
-
-    for _, SchemeIndex in SchemeIndexes do
-        local IndexData = Theme[SchemeIndex]
-        local IndexType = typeof(IndexData)
-        
-        if IndexType == "Color3" then
-            LibraryScheme[SchemeIndex] = IndexData
-            FinalTheme[SchemeIndex] = string.format("#%s", IndexData:ToHex())
-
-        elseif IndexType == "string" then
-            LibraryScheme[SchemeIndex] = Color3.fromHex(IndexData)
-            FinalTheme[SchemeIndex] = if IndexData:sub(1, 1) == "#" then IndexData else string.format("#%s", IndexData)
-        
-        else
-            local Value = DefaultThemeData[SchemeIndex]
-            LibraryScheme[SchemeIndex] = Color3.fromHex(Value)
-            FinalTheme[SchemeIndex] = Value
-        end
-    end
-
-    --// Font
-    local FontFace = Theme["FontFace"]
-    local FontFaceType = typeof(FontFace)
-    
-    if FontFaceType == "EnumItem" then
-        LibraryScheme.Font = Font.fromEnum(FontFace)
-        FinalTheme.FontFace = FontFace.Name
-
-    elseif FontFaceType == "string" then
-        LibraryScheme.Font = Font.fromEnum(Enum.Font[FontFace] :: Enum.Font)
-        FinalTheme.FontFace = FontFace
-    
-    else
-        LibraryScheme.Font = Font.fromEnum(Enum.Font.Code)
-        FinalTheme.FontFace = "Code"
-    end
-
-    --// Default Scheme Colors
-    for _, DefaultSchemeColor in { "RedColor", "DestructiveColor", "DarkColor", "WhiteColor" } do
-        LibraryScheme[DefaultSchemeColor] = Library.Scheme[DefaultSchemeColor]
-    end
-
-    --// Apply
-    Library.Scheme = LibraryScheme
-    ThemeManager.BuiltInThemes["Default"] = { 1, FinalTheme }
-
-    Library:UpdateColorsUsingRegistry()
-end
-
-function ThemeManager:SaveDefault(ThemeName: string): (boolean, string?)
-    if IsStringEmpty(ThemeName) then
-        return false, "No theme is selected"
-    end
-
-    ThemeManager:CheckFolderTree()
-
-    local DefaultThemePath = GetDefaultThemePath()
-    if DefaultThemePath == false then
-        return false, "Invalid path provided"
-    end
-
-    if not DoesThemeExist(ThemeName, true) then
-        return false, "Theme does not exist"
-    end
-
-    local SuccessWrite, ErrorMessage = pcall(writefile, DefaultThemePath, ThemeName)
-    if not SuccessWrite then
-        return false, ErrorMessage
-    end
-
-    ThemeManager.DefaultThemeName = ThemeName
-    return true
-end
-
-function ThemeManager:LoadDefault()
-    local ThemeName, Success, FetchErrorMessage = ThemeManager:GetDefaultTheme()
-    if not Success or FetchErrorMessage then
-        if FetchErrorMessage ~= "Default theme is not set" then
-            ThemeManager.Library:Notify(string.format("Failed to apply default theme: %s", FetchErrorMessage))
-        end
-
-        return
-    end
-
-    if not ThemeManager:GetCustomTheme(ThemeName) then
-        ThemeManager.Library.Options.ThemeManager_ThemeList:SetValue(ThemeName)
-        return
-    end
-
-    local SuccessLoad, LoadErrorMessage = ThemeManager:ApplyTheme(ThemeName)
-    if not SuccessLoad then
-        ThemeManager.Library:Notify(string.format("Failed to apply default theme: %s", LoadErrorMessage))
-        return
-    end
-
-    ThemeManager.Library:Notify(string.format("Successfully applied default theme %q", ThemeName))
-end
-
-function ThemeManager:DeleteDefaultTheme(): (boolean, string?)
-    ThemeManager:CheckFolderTree()
-
-    local DefaultThemePath = GetDefaultThemePath()
-    if DefaultThemePath == false then
-        return false, "Invalid path provided"
-    end
-
-    if not isfile(DefaultThemePath) then
-        return false, "Default theme is not set"
-    end
-
-    local SuccessDelete, ErrorMessage = pcall(delfile, DefaultThemePath)
-    if not SuccessDelete then
-        return false, ErrorMessage
-    end
-
-    ThemeManager.DefaultThemeName = nil
-    return true
-end
-
---// Accessibility: contrast checking \\--
-function ThemeManager:GetContrastReport(): { Ratio: number, PairName: string, Passes: boolean }
-    local Library = ThemeManager.Library
-    local FontColorOption = Library.Options.FontColor
-    local BackgroundColorOption = Library.Options.BackgroundColor
-    local MainColorOption = Library.Options.MainColor
-
-    if not (FontColorOption and BackgroundColorOption and MainColorOption) then
-        return { Ratio = math.huge, PairName = "", Passes = true }
-    end
-
-    local FontColor = FontColorOption.Value
-    local Surfaces = {
-        { Name = "font color vs. background color", Color = BackgroundColorOption.Value },
-        { Name = "font color vs. main color", Color = MainColorOption.Value },
-    }
-
-    local WorstRatio, WorstName = math.huge, ""
-    for _, Surface in Surfaces do
-        local Ratio = GetContrastRatio(FontColor, Surface.Color)
-        if Ratio < WorstRatio then
-            WorstRatio = Ratio
-            WorstName = Surface.Name
-        end
-    end
-
-    return {
-        Ratio = WorstRatio,
-        PairName = WorstName,
-        Passes = WorstRatio >= ContrastWarnThreshold,
-    }
-end
-
-function ThemeManager:UpdateContrastWarning()
-    local ContrastLabel = ThemeManager.ContrastLabel
-    if not ContrastLabel or ContrastLabel.Destroyed then
-        return
-    end
-
-    local Library = ThemeManager.Library
-    local Report = ThemeManager:GetContrastReport()
-    local TextLabel = ContrastLabel.TextLabel
-
-    if not Library.Registry[TextLabel] then
-        Library:AddToRegistry(TextLabel, {})
-    end
-
-    if Report.Passes then
-        ContrastLabel:SetText(string.format("Contrast check: good (%.1f:1)", Report.Ratio))
-
-        TextLabel.TextColor3 = Library.Scheme.FontColor
-        Library.Registry[TextLabel].TextColor3 = "FontColor"
-    else
-        ContrastLabel:SetText(string.format(
-            "Low contrast (%.1f:1) between %s. Aim for at least %.1f:1 so text stays readable.",
-            Report.Ratio, Report.PairName, ContrastWarnThreshold
-        ))
-
-        TextLabel.TextColor3 = Library.Scheme.RedColor
-        Library.Registry[TextLabel].TextColor3 = "RedColor"
-
-        if not ThemeManager.ContrastWasPoor then
-            Library:Notify({
-                Title = "Low contrast theme",
-                Description = string.format(
-                    "Your %s has a contrast ratio of %.1f:1, below the recommended %.1f:1. Text may be hard to read.",
-                    Report.PairName, Report.Ratio, ContrastWarnThreshold
-                ),
-                Time = 10,
-            })
-        end
-    end
-
-    ThemeManager.ContrastWasPoor = not Report.Passes
-end
-
---// Apply Theme \\--
-function ThemeManager:ThemeUpdate()
-    local Library = ThemeManager.Library
-
-    for _, SchemeIndex in SchemeIndexes do
-        local Element = Library.Options[SchemeIndex]
-        if not Element then continue end
-
-        Library.Scheme[SchemeIndex] = Element.Value
-    end
-
-    Library:UpdateColorsUsingRegistry()
-    ThemeManager:UpdateContrastWarning()
-end
-
---// Applies a flat theme data table (either a parsed theme file or an imported JSON blob) to the library.
---// Split out of ApplyTheme so imported JSON can go through the same path as themes loaded from disk.
-function ThemeManager:ApplyThemeData(ThemeData: any): (boolean, string?)
-    if typeof(ThemeData) ~= "table" then
-        return false, "Invalid theme data"
-    end
-
-    local Library = ThemeManager.Library
-
-    for Index, Value in ThemeData do
-        if Index == "VideoLink" then
-            continue
-        end
-
-        local Element = Library.Options[Index]
-        local FinalValue = Value
-
-        if Index == "FontFace" then
-            if typeof(Value) ~= "string" or not Enum.Font[Value] then continue end
-            ThemeManager.Library:SetFont(Enum.Font[Value])
-
-        elseif Index == "BackgroundImage" then
-            if typeof(Value) ~= "string" then continue end
-            ThemeManager.Library:SetBackgroundImage(Value)
-
-        elseif table.find(SchemeIndexes, Index) then
-            local SuccessColor, Color = pcall(Color3.fromHex, Value)
-            if not SuccessColor then continue end
-
-            FinalValue = Color
-            Library.Scheme[Index] = FinalValue
-
-        else
-            continue --// Unrecognized field, ignore it
-        end
-
-        if Element then
-            Element:SetValue(FinalValue)
-        end
-    end
-
-    ThemeManager:ThemeUpdate()
-    return true
-end
-
-function ThemeManager:ApplyTheme(ThemeName: string)
-    if IsStringEmpty(ThemeName) then
-        return false, "No theme is selected"
-    end
-
-    local CustomThemeData = ThemeManager:GetCustomTheme(ThemeName)
-    local Data = CustomThemeData or ThemeManager.BuiltInThemes[ThemeName]
-    
-    if not Data then
-        return false, "Theme not found"
-    end
-    
-    local ThemeData = CustomThemeData or Data[2]
-    return ThemeManager:ApplyThemeData(ThemeData)
-end
-
---// JSON Import & Export \\--
-function ThemeManager:SaveJSON(): (string, boolean, string?)
-    local ThemeData = BuildCurrentThemeData()
-
-    local SuccessEncode, EncodedData = pcall(HttpService.JSONEncode, HttpService, ThemeData)
-    if not SuccessEncode then
-        return "", false, "Failed to encode data"
-    end
-
-    return EncodedData, true
-end
-
-function ThemeManager:LoadJSON(Content: string): (boolean, string?)
-    if IsStringEmpty(Content) then
-        return false, "No JSON provided"
-    end
-
-    local SuccessDecode, Decoded = pcall(HttpService.JSONDecode, HttpService, Content)
-    if not SuccessDecode or not IsValidThemeData(Decoded) then
-        return false, "Failed to decode theme data"
-    end
-
-    return ThemeManager:ApplyThemeData(Decoded)
-end
-
---// GUI \\--
-local function ShowDialog(
-    Condition: () -> boolean,
-
-    Index: string, 
-    Title: string, 
-    Description: string,
-
-    DestructiveText: string,
-    DestructiveAction: () -> nil
-)
-    if Condition() == false then
-        return DestructiveAction()
-    end
-
-    return ThemeManager.Library.Window:AddDialog(Index, {
-        Title = Title,
-        Description = Description,
-        AutoDismiss = false,
-
-        FooterButtons = {
-            Cancel = {
-                Title = "Cancel",
-                Variant = "Ghost",
-                Order = 1,
-                Callback = function(Dialog)
-                    Dialog:Dismiss()
-                end
-            },
-
-            DestructiveAction = {
-                Title = DestructiveText,
-                Variant = "Destructive",
-                Order = 2,
-                Callback = function(Dialog)
-                    Dialog:Dismiss()
-                    DestructiveAction()
-                end
-            }
-        }
-    })
-end
-
-function ThemeManager:CreateThemeManager(Themesbox: any)
-    assert(ThemeManager.Library, "Library is not set, call ThemeManager:SetLibrary(Library) first.")
-
-    local BuiltInThemesNames = {}
-    for Name, _ThemeData in ThemeManager.BuiltInThemes do
-        table.insert(BuiltInThemesNames, Name)
-    end
-
-    local CustomThemeList, CustomThemeName, ThemeList, FontFace, BackgroundImage, DefaultThemeLabel, ThemeJSONInput
-    local function RefreshList()
-        CustomThemeList:SetValues(ThemeManager:ReloadCustomThemes())
-        CustomThemeList:SetValue(nil)
-
-        ThemeList:SetValues(BuiltInThemesNames)
-    end
-
-    local function RefreshDefaultThemeLabel()
-        local DefaultThemeName, _Success, _ErrorMessage = ThemeManager:GetDefaultTheme()
-
-        DefaultThemeLabel:SetText(string.format("Current default theme: %s", DefaultThemeName))
-        if CustomThemeList then RefreshList() end
-    end
-
-    table.sort(BuiltInThemesNames, function(IndexA, IndexB)
-        return ThemeManager.BuiltInThemes[IndexA][1] < ThemeManager.BuiltInThemes[IndexB][1]
-    end)
-
-    local function CreateColorOption(Text, SchemeIndex)
-        Themesbox:AddLabel(Text):AddColorPicker(SchemeIndex, {
-            Default = ThemeManager.Library.Scheme[SchemeIndex]
-        })
-
-        return ThemeManager.Library.Options[SchemeIndex]
-    end
-
-    local BackgroundColor = CreateColorOption("Background color", "BackgroundColor")
-    local MainColor = CreateColorOption("Main color", "MainColor")
-    local AccentColor = CreateColorOption("Accent color", "AccentColor")
-    local OutlineColor = CreateColorOption("Outline color", "OutlineColor")
-    local FontColor = CreateColorOption("Font color", "FontColor")
-
-    --// Accessibility: live contrast readout for the colors above
-    ThemeManager.ContrastLabel = Themesbox:AddLabel({
-        Text = "Contrast check: n/a",
-        DoesWrap = true,
-    })
-
-    Themesbox:AddDropdown("FontFace", {
-        Text = "Font Face",
-        Default = "Jura",
-        
-        Values = { "BuilderSans", "Code", "Fantasy", "Gotham", "Jura", "Roboto", "RobotoMono", "SourceSans" },
-        AllowNull = false,
-        Multi = false
-    })
-    
-    Themesbox:AddInput("BackgroundImage", { 
-        Text = "Background Image",
-
-        Default = "",
-        Finished = true,
-        ClearTextOnFocus = false,
-        ClearTextOnBlur = false
-    })
-
-    Themesbox:AddDivider()
-
-    Themesbox:AddDropdown("ThemeManager_ThemeList", { 
-        Text = "Theme list", 
-
-        Values = BuiltInThemesNames,
-        AllowNull = true,
-        Multi = false,
-
-        FormatDisplayValue = function(Value: any)
-            if Value ~= "Default" and Value == ThemeManager.DefaultThemeName then
-                return string.format("%s (default)", Value)
-            end
-
-            return Value
-        end,
-        FormatListValue = function(Value: any)
-            if Value ~= "Default" and Value == ThemeManager.DefaultThemeName then
-                return string.format("%s (default)", Value)
-            end
-
-            return Value
-        end
-    })
-
-    Themesbox:AddButton("Set as default", function()
-        local ThemeName = ThemeList.Value
-        ThemeManager:SaveDefault(ThemeName)
-
-        ThemeManager.Library:Notify(string.format("Successfully set default theme to %q", ThemeName))
-        RefreshDefaultThemeLabel()
-    end)
-
-    Themesbox:AddDivider()
-
-    CustomThemeName = Themesbox:AddInput("ThemeManager_CustomThemeName", { 
-        Text = "Custom theme name" 
-    })
-
-    local function SaveThemeWithContrastCheck(Name: string, SuccessMessage: string, OnSaved: (() -> nil)?)
-        local function DoSave()
-            local Success, ErrorMessage = ThemeManager:SaveCustomTheme(Name)
-            if not Success then
-                ThemeManager.Library:Notify(string.format("Failed to save theme %q: %s", Name, ErrorMessage))
-                return
-            end
-
-            ThemeManager.Library:Notify(string.format(SuccessMessage, Name))
-            if OnSaved then OnSaved() end
-        end
-
-        local Report = ThemeManager:GetContrastReport()
-        if Report.Passes then
-            DoSave()
-            return
-        end
-
-        ShowDialog(
-            function(): boolean
-                return true
-            end,
-
-            "ThemeManager_LowContrastSave",
-            "Low contrast theme",
-            string.format(
-                "This theme has a contrast ratio of %.1f:1 between %s, below the recommended %.1f:1. Text may be hard to read. Save anyway?",
-                Report.Ratio, Report.PairName, ContrastWarnThreshold
-            ),
-
-            "Save Anyway",
-            DoSave
-        )
-    end
-
-    Themesbox:AddButton("Create theme", function()
-        local Name = CustomThemeName.Value
-        if IsStringEmpty(Name) then
-            ThemeManager.Library:Notify("Theme name cannot be empty.")
-            return
-        end
-
-        if string.lower(Name) == "default" then
-            ThemeManager.Library:Notify("Invalid theme name provided.")
-            return
-        end
-
-        ShowDialog(
-            function(): boolean
-                return ThemeManager:GetCustomTheme(Name) ~= nil
-            end,
-
-            "ThemeManager_CreateTheme",
-            "Theme already exists",
-            string.format("A custom theme named %q already exists. Overwriting it will replace it with your current colors.", Name),
-
-            "Overwrite",
-            function()
-                SaveThemeWithContrastCheck(Name, "Successfully created theme %q", RefreshList)
-            end
-        )
-    end)
-
-    Themesbox:AddDivider()
-
-    CustomThemeList = Themesbox:AddDropdown("ThemeManager_CustomThemeList", { 
-        Text = "Custom themes",
-
-        Values = ThemeManager:ReloadCustomThemes(), 
-        AllowNull = true,
-        Multi = false,
-
-        FormatDisplayValue = function(Value: any)
-            if Value == ThemeManager.DefaultThemeName then
-                return string.format("%s (default)", Value)
-            end
-
-            return Value
-        end,
-        FormatListValue = function(Value: any)
-            if Value == ThemeManager.DefaultThemeName then
-                return string.format("%s (default)", Value)
-            end
-
-            return Value
-        end
-    })
-
-    Themesbox:AddButton("Load theme", function()
-        local Name = CustomThemeList.Value
-        if IsStringEmpty(Name) then
-            ThemeManager.Library:Notify("Please select a theme first.")
-            return
-        end
-
-        ThemeManager:ApplyTheme(Name)
-        ThemeManager.Library:Notify(string.format("Successfully loaded theme %q", Name))
-    end)
-
-    Themesbox:AddButton("Overwrite theme", function()
-        local Name = CustomThemeList.Value
-        if IsStringEmpty(Name) then
-            ThemeManager.Library:Notify("Please select a theme first.")
-            return
-        end
-
-        ShowDialog(
-            function(): boolean
-                return true
-            end,
-
-            "ThemeManager_OverwriteTheme",
-            "Overwrite theme",
-            string.format("Are you sure you want to overwrite %q with your current colors? This cannot be undone.", Name),
-
-            "Overwrite",
-            function()
-                SaveThemeWithContrastCheck(Name, "Successfully overwrote theme %q")
-            end
-        )
-    end)
-
-    Themesbox:AddButton("Delete theme", function()
-        local Name = CustomThemeList.Value
-        if IsStringEmpty(Name) then
-            ThemeManager.Library:Notify("Please select a theme first.")
-            return
-        end
-
-        ShowDialog(
-            function(): boolean
-                return true
-            end,
-
-            "ThemeManager_DeleteTheme",
-            "Delete theme",
-            string.format("Are you sure you want to delete %q? This cannot be undone.", Name),
-            
-            "Delete",
-            function()
-                local Success, ErrorMessage = ThemeManager:Delete(Name)
-                if not Success then
-                    ThemeManager.Library:Notify(string.format("Failed to delete theme: %s", ErrorMessage))
-                    return
-                end
-
-                ThemeManager.Library:Notify(string.format("Successfully deleted theme %q", Name))
-                RefreshDefaultThemeLabel()
-            end
-        )
-    end)
-
-    Themesbox:AddButton("Refresh list", RefreshList)
-
-    Themesbox:AddButton("Set as default", function()
-        local Name = CustomThemeList.Value
-        if IsStringEmpty(Name) then
-            ThemeManager.Library:Notify("Please select a theme first.")
-            return
-        end
-
-        ThemeManager:SaveDefault(Name)
-        ThemeManager.Library:Notify(string.format("Successfully set default theme to %q", Name))
-        RefreshDefaultThemeLabel()
-    end)
-
-    Themesbox:AddButton("Reset default", function()
-        ShowDialog(
-            function(): boolean
-                return true
-            end,
-
-            "ThemeManager_ResetDefault",
-            "Reset default theme",
-            "Are you sure you want to clear the default theme? The library will revert to its built-in default on next load.",
-            
-            "Reset",
-            function()
-                local Success, ErrorMessage = ThemeManager:DeleteDefaultTheme()
-                if not Success then
-                    ThemeManager.Library:Notify(string.format("Failed to reset default theme: %s", ErrorMessage))
-                    return
-                end
-
-                ThemeManager.Library:Notify("Successfully reset default theme.")
-                RefreshDefaultThemeLabel()
-            end
-        )
-    end)
-
-    DefaultThemeLabel = Themesbox:AddLabel("Current default theme: ...", true);
-
-    Themesbox:AddDivider()
-
-    --// Import & Export
-    Themesbox:AddInput("ThemeManager_ThemeJSON", {
-        Text = "Theme JSON"
-    })
-
-    Themesbox:AddButton("Import theme", function()
-        local ThemeJSON = ThemeJSONInput.Value
-        if IsStringEmpty(ThemeJSON) then
-            ThemeManager.Library:Notify("Theme JSON cannot be empty")
-            return
-        end
-
-        ShowDialog(
-            function(): boolean
-                return true
-            end,
-
-            "ThemeManager_ImportTheme",
-            "Import theme",
-            "Are you sure you want to import this theme? Your current colors will be overwritten.",
-
-            "Import",
-            function()
-                local Success, ErrorMessage = ThemeManager:LoadJSON(ThemeJSON)
-                if not Success then
-                    ThemeManager.Library:Notify(string.format("Failed to import theme: %s", ErrorMessage))
-                    return
-                end
-
-                ThemeManager.Library:Notify("Successfully imported theme")
-            end
-        )
-    end)
-
-    Themesbox:AddButton("Export current theme", function()
-        local EncodedData, Success, ErrorMessage = ThemeManager:SaveJSON()
-        if not Success then
-            ThemeManager.Library:Notify(ErrorMessage)
-            return
-        end
-
-        ThemeJSONInput:SetValue(EncodedData)
-        if setclipboard then
-            setclipboard(EncodedData)
-            ThemeManager.Library:Notify("Copied theme to your clipboard")
-        end
-    end)
-
-    --// Set Variables
-    CustomThemeList, CustomThemeName, ThemeList, FontFace, BackgroundImage, ThemeJSONInput =
-        ThemeManager.Library.Options.ThemeManager_CustomThemeList,
-        ThemeManager.Library.Options.ThemeManager_CustomThemeName,
-        ThemeManager.Library.Options.ThemeManager_ThemeList,
-        ThemeManager.Library.Options.FontFace,
-        ThemeManager.Library.Options.BackgroundImage,
-        ThemeManager.Library.Options.ThemeManager_ThemeJSON;
-
-    --// Handlers
-    ThemeList:OnChanged(function()
-        ThemeManager:ApplyTheme(ThemeList.Value)
-    end)
-
-    local function UpdateTheme()
-        ThemeManager:ThemeUpdate()
-    end
-
-    BackgroundColor:OnChanged(UpdateTheme)
-    MainColor:OnChanged(UpdateTheme)
-    AccentColor:OnChanged(UpdateTheme)
-    OutlineColor:OnChanged(UpdateTheme)
-    FontColor:OnChanged(UpdateTheme)
-    FontFace:OnChanged(function(Value) ThemeManager.Library:SetFont(Enum.Font[Value]) end)
-    BackgroundImage:OnChanged(function(Value) ThemeManager.Library:SetBackgroundImage(Value) end)
-
-    --// Load default
-    ThemeManager:LoadDefault()
-    ThemeManager:UpdateContrastWarning()
-    ThemeManager.AppliedToTab = true
-    RefreshDefaultThemeLabel()
-
-    return Themesbox
-end
-
-function ThemeManager:CreateGroupBox(Tab: any, IconName: string)
-    return Tab:AddGroupbox({
-        Side = "Left",
-        Name = "Themes",
-        IconName = IconName or "paintbrush",
-    })
-end
-
-function ThemeManager:ApplyToTab(Tab: any, IconName: string)
-    local Groupbox = ThemeManager:CreateGroupBox(Tab, IconName)
-    return ThemeManager:CreateThemeManager(Groupbox)
-end
-
-function ThemeManager:ApplyToGroupbox(Groupbox: any)
-    return ThemeManager:CreateThemeManager(Groupbox)
-end
-
-getgenv().ObsidianThemeManager = ThemeManager
-return ThemeManager
-end)()
-
+local ThemeManager = loadObsidian("addons/ThemeManager.lua")
 local SaveManager = loadObsidian("addons/SaveManager.lua")
 
--- Ensure Lucide Icons are properly loaded for tabs & groupboxes
+-- Ensure Lucide Icons are properly loaded for tabs & groupboxes (cached locally like Obsidian)
 pcall(function()
 	local lucideModule = nil
-	pcall(function()
-		lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua"))()
-	end)
-	if not lucideModule then
+	local cachePath = "Obsidian/lucide.lua"
+	local okCached, cachedSource = pcall(readfile, cachePath)
+	if okCached and type(cachedSource) == "string" and cachedSource ~= "" then
 		pcall(function()
-			lucideModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua"))()
+			lucideModule = loadstring(cachedSource)()
 		end)
+	end
+	if not lucideModule then
+		local fetched = nil
+		pcall(function()
+			fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox-direct/main/source.lua")
+		end)
+		if not fetched or fetched == "" then
+			pcall(function()
+				fetched = game:HttpGet("https://raw.githubusercontent.com/mstudio45/lucide-roblox/main/src/modules/util/lucide.lua")
+			end)
+		end
+		if fetched and fetched ~= "" then
+			pcall(function()
+				lucideModule = loadstring(fetched)()
+			end)
+			if lucideModule and writefile then
+				pcall(function()
+					if makefolder then pcall(makefolder, "Obsidian") end
+					writefile(cachePath, fetched)
+				end)
+			end
+		end
 	end
 	if lucideModule and Library.SetIconModule then
 		Library:SetIconModule(lucideModule)
@@ -1268,11 +115,17 @@ Library.ShowToggleFrameInKeybinds = true
 
 -- Helpers
 local function waitForChild(parent, name, timeout)
-	timeout = timeout or 10
-	local start = tick()
+	if not parent then return nil end
 	local child = parent:FindFirstChild(name)
+	if child then return child end
+	timeout = timeout or 10
+	local ok, waited = pcall(parent.WaitForChild, parent, name, timeout)
+	if ok then
+		return waited
+	end
+	local start = tick()
 	while not child and tick() - start < timeout do
-		task.wait()
+		task.wait(0.1)
 		child = parent:FindFirstChild(name)
 	end
 	return child
@@ -1442,7 +295,9 @@ local function setBehaviorDisabled(instance, disabled)
 		return false
 	end
 	local ok = pcall(function()
-		instance.Disabled = disabled
+		if instance.Disabled ~= disabled then
+			instance.Disabled = disabled
+		end
 	end)
 	return ok
 end
@@ -1465,7 +320,7 @@ local function getKeyedRemotes()
 		return keyed
 	end
 	pcall(function()
-		for _, fn in next, getgc(true) do
+		for _, fn in next, getgc(false) do
 			if typeof(fn) == "function" and islclosure(fn) then
 				local constants = debug.getconstants(fn)
 				if rawget(constants, 1) == "Destroy" and rawget(constants, 2) == "new" then
@@ -1580,7 +435,7 @@ end
 
 
 Library.Font = Enum.Font.Fantasy
-Library.CornerRadius = 20
+Library.CornerRadius = 3
 
 -- Window
 local Window = Library:CreateWindow({
@@ -1592,7 +447,7 @@ local Window = Library:CreateWindow({
 	Resizable = true,
 	NotifySide = "Right",
 	ShowCustomCursor = false,
-	CornerRadius = 20,
+	CornerRadius = 3,
 })
 
 local Tabs = {
@@ -2822,11 +1677,12 @@ do
 				if LocalPlayer.Character then
 					hookAtlanteanSlotChar(LocalPlayer.Character)
 				end
-				track("AtlanteanSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAtlanteanSlotChar))
-
-				track("AtlanteanSlotSystem_Poll", RunService.Heartbeat:Connect(function()
-					updateAtlanteanSlotSystemState()
+				track("AtlanteanSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+					hookAtlanteanSlotChar(char)
+					task.delay(0.2, updateAtlanteanSlotSystemState)
 				end))
+
+				track("AtlanteanSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAtlanteanSlotSystemState))
 
 				updateAtlanteanSlotSystemState()
 
@@ -2928,13 +1784,9 @@ MainRight = PlayerSettingsTabBox:AddTab("SETTINGS", "settings")
 HudsGroup = PlayerSettingsTabBox:AddTab("HUDS", "layout-dashboard")
 
 -- ============================================================================
--- MAIN TAB (COSMETICS / CONFIG / SPECTATE)
+-- MAIN TAB (COSMETICS / SPECTATE)
 -- ============================================================================
--- COSMETICS and CONFIG sit side by side in one left tabbox, the same way the
--- Silent Aim menu pairs its tabs. Globals on purpose: the main chunk is already
--- at Luau's 200-local register limit.
-CosmeticsTabBox = Tabs.Main:AddLeftTabbox()
-CosmeticsGroup = CosmeticsTabBox:AddTab("COSMETICS", "crown")
+local CosmeticsGroup = Tabs.Main:AddLeftGroupbox("COSMETICS", "crown")
 
 CosmeticPresets = {}
 
@@ -3033,124 +1885,7 @@ CosmeticsGroup:AddDropdown("BackWearSelect", {
 	Multi = true,
 })
 
--- CONFIG tab: sits side by side with COSMETICS in the same left tabbox and
--- holds all of the colour / target controls.
-ConfigGroup = CosmeticsTabBox:AddTab("CONFIG", "settings")
-
--- Recolour the character's own body (head, torso, arms, legs) independently
--- of the gear and cosmetics.
-ConfigGroup:AddCheckbox("BodyColorChange", {
-	Text = "Change Body Color",
-	Default = false,
-}):AddColorPicker("BodyColorPicker", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Body Color",
-})
-
--- Recolour the gear the player already has equipped (Head, Shirt, Pants, Bag).
--- The checkbox applies the chosen colour to the parts ticked in the dropdown;
--- turning it off restores the original colours.
-ConfigGroup:AddCheckbox("RecolorEquipped", {
-	Text = "Recolor Equipped Gear",
-	Default = false,
-}):AddColorPicker("RecolorEquippedColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Gear Color",
-})
-
-ConfigGroup:AddDropdown("RecolorEquippedTarget", {
-	Text = "Target",
-	Values = { "Head", "Shirt", "Pants", "Bag" },
-	Default = { "Head" },
-	Multi = true,
-})
-
--- Master switch for the cosmetic recolouring below: while this is off the worn
--- cosmetics keep their own colours no matter what is ticked underneath.
-ConfigGroup:AddCheckbox("CosmeticColorChange", {
-	Text = "Color Cosmetics",
-	Default = false,
-})
-
--- Cosmetic color changer: tints the in-game cosmetic items the script equips
--- for you (the Head / Body / Pants / Back Wear picked in the Cosmetics menu).
--- Tick the categories to tint, then set each colour below it. Unticking a
--- category puts the cosmetic's own colours back.
-ConfigGroup:AddDropdown("WearColorSelect", {
-	Text = "Recolor Cosmetics",
-	Values = { "Head Wear", "Body Wear", "Pants Wear", "Back Wear" },
-	Default = {},
-	Multi = true,
-})
-
--- The four colour rows are label-addon pairs, so the label object is kept: the
--- label owns the swatch and hiding it hides the text too. Held on a global
--- table because the main chunk is at Luau's 200-local register limit.
-CosmeticColorRows = {}
-
-CosmeticColorRows.Head = ConfigGroup:AddLabel("Head Wear Color")
-CosmeticColorRows.Head:AddColorPicker("CosmeticSelectColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Head Wear Color",
-})
-
-CosmeticColorRows.Body = ConfigGroup:AddLabel("Body Wear Color")
-CosmeticColorRows.Body:AddColorPicker("BodyWearSelectColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Body Wear Color",
-})
-
-CosmeticColorRows.Pants = ConfigGroup:AddLabel("Pants Wear Color")
-CosmeticColorRows.Pants:AddColorPicker("PantsWearSelectColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Pants Wear Color",
-})
-
-CosmeticColorRows.Back = ConfigGroup:AddLabel("Back Wear Color")
-CosmeticColorRows.Back:AddColorPicker("BackWearSelectColor", {
-	Default = Color3.fromRGB(255, 255, 255),
-	Title = "Back Wear Color",
-})
-
--- The cosmetic colour rows only make sense while "Color Cosmetics" is on, and
--- the target dropdown only while "Recolor Equipped Gear" is on.
-updateConfigVisibility = function()
-	local colorOn = (Toggles.CosmeticColorChange and Toggles.CosmeticColorChange.Value) or false
-	local recolorOn = (Toggles.RecolorEquipped and Toggles.RecolorEquipped.Value) or false
-
-	-- Use the library's :SetVisible() so each element's own Holder is updated.
-	local function setVisible(element, visible)
-		if element and element.SetVisible then
-			element:SetVisible(visible and true or false)
-		end
-	end
-
-	setVisible(Options.WearColorSelect, colorOn)
-	setVisible(CosmeticColorRows.Head, colorOn)
-	setVisible(CosmeticColorRows.Body, colorOn)
-	setVisible(CosmeticColorRows.Pants, colorOn)
-	setVisible(CosmeticColorRows.Back, colorOn)
-	setVisible(Options.RecolorEquippedTarget, recolorOn)
-
-	-- A sub-tab measures itself from AbsoluteContentSize, which the layout
-	-- engine only refreshes after the current frame's UI pass, so re-run the
-	-- resize on the next frame to pick up the new height.
-	task.defer(function()
-		if CosmeticsTabBox and CosmeticsTabBox.Resize then
-			CosmeticsTabBox:Resize()
-		end
-	end)
-end
-
-updateConfigVisibility()
-
-if Toggles.CosmeticColorChange then
-	Toggles.CosmeticColorChange:OnChanged(updateConfigVisibility)
-end
-
-if Toggles.RecolorEquipped then
-	Toggles.RecolorEquipped:OnChanged(updateConfigVisibility)
-end
+CosmeticsGroup:AddDivider()
 
 -- Hit Sounds (built here, but the controls live in the MISC group so the
 -- Cosmetics menu stays purely visual).
@@ -3200,8 +1935,29 @@ MiscGroup:AddDropdown("HitSoundSelect", {
 
 MiscGroup:AddDropdown("HitEffectSelect", {
 	Text = "Hit Effect",
-	Values = { "None", "Lightning", "Smoke", "Fire", "Explosion", "Ice", "Poison", "Shockwave", "Blood", "Sakura", "Void", "Holy", "Shadow", "Water", "Sand", "Leaf", "Fireworks", "Meteor", "Rainbow", "Black Hole", "Tornado", "Snow", "Hearts", "Slash", "Nuke", "Soul" },
+	Values = { "None", "Lightning", "Smoke", "Fire", "Explosion", "Ice", "Poison", "Shockwave", "Blood", "Sakura", "Void", "Holy", "Shadow", "Water", "Sand", "Leaf", "Fireworks", "Meteor" },
 	Default = "None",
+})
+
+MiscGroup:AddDivider()
+
+MiscGroup:AddToggle("CustomCursorActive", {
+	Text = "Cursor",
+	Default = false,
+})
+
+MiscGroup:AddDropdown("CustomCursorType", {
+	Values = { "Tiny Square", "Circle", "X" },
+	Default = "X",
+	Text = "Cursor Type",
+})
+
+MiscGroup:AddSlider("CustomCursorSize", {
+	Text = "Cursor Size",
+	Default = 10,
+	Min = 4,
+	Max = 50,
+	Rounding = 0,
 })
 
 -- The hit effects are particle based, so "Remove Particles" would hide them.
@@ -3298,14 +2054,15 @@ end
 
 -- Hit effect: a short-lived cosmetic burst where the melee hit landed.
 -- Declared as a global on purpose (the main chunk is at Luau's 200-local limit).
-Xeno_PlayHitEffect = function(hitArgs)
+Xeno_PlayHitEffect = function(hitArg)
 	pcall(function()
 		local selected = Options.HitEffectSelect and Options.HitEffectSelect.Value
 		if not selected or selected == "None" then return end
 
 		-- Cap the spawn rate so a fast kill-aura can't pile up effect folders.
 		local now = tick()
-		if now - (XenoHitEffectLast or 0) < 0.08 then return end
+		local minInterval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.18 or 0.08
+		if now - (XenoHitEffectLast or 0) < minInterval then return end
 		XenoHitEffectLast = now
 
 		local character = getCharacter()
@@ -3317,7 +2074,7 @@ Xeno_PlayHitEffect = function(hitArgs)
 		-- body part so effects like Fire can cling to it.
 		local position
 		local targetRoot
-		local arg = hitArgs and hitArgs[2]
+		local arg = typeof(hitArg) == "table" and hitArg[2] or hitArg
 		if typeof(arg) == "Instance" then
 			local char = arg
 			if arg:IsA("Player") then
@@ -3622,7 +2379,7 @@ Xeno_PlayHitEffect = function(hitArgs)
 			flash.Brightness = 3
 			flash.Parent = anchor
 
-			-- Ground ring that expands outwards from the impact point.
+			-- Ground ring that expands outwards from the impact point using native TweenService.
 			local ring = Instance.new("Part")
 			ring.Anchored = true
 			ring.CanCollide = false
@@ -3637,16 +2394,11 @@ Xeno_PlayHitEffect = function(hitArgs)
 			ring.Parent = fxFolder
 			table.insert(extras, ring)
 
-			task.spawn(function()
-				local grow = 0
-				while grow < 1 and ring.Parent do
-					grow += 0.06
-					local diameter = 1 + grow * 12
-					ring.Size = Vector3.new(0.15, diameter, diameter)
-					ring.Transparency = math.clamp(grow, 0, 1)
-					task.wait(0.02)
-				end
-			end)
+			game:GetService("TweenService"):Create(
+				ring,
+				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Size = Vector3.new(0.15, 13, 13), Transparency = 1 }
+			):Play()
 
 			addEmitter(anchor, {
 				Texture = "rbxasset://textures/particles/smoke_main.dds",
@@ -3994,323 +2746,6 @@ Xeno_PlayHitEffect = function(hitArgs)
 				Speed = NumberRange.new(6, 12),
 				SpreadAngle = Vector2.new(180, 180),
 			})
-		elseif selected == "Rainbow" then
-			emitWindow = 0.3
-			totalLife = 2.2
-
-			local rainbowLight = Instance.new("PointLight")
-			rainbowLight.Color = Color3.fromRGB(255, 180, 255)
-			rainbowLight.Range = 26
-			rainbowLight.Brightness = 3.5
-			rainbowLight.Parent = anchor
-
-			-- Multicoloured burst that arcs out and falls like glitter.
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
-					ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 225, 80)),
-					ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 255, 130)),
-					ColorSequenceKeypoint.new(0.75, Color3.fromRGB(80, 190, 255)),
-					ColorSequenceKeypoint.new(1, Color3.fromRGB(205, 100, 255)),
-				}),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 2),
-					NumberSequenceKeypoint.new(1, 0.4),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.05),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(0.7, 1.2),
-				Rate = 220,
-				Speed = NumberRange.new(14, 30),
-				SpreadAngle = Vector2.new(180, 180),
-				Acceleration = Vector3.new(0, -14, 0),
-				LightEmission = 1,
-			})
-		elseif selected == "Black Hole" then
-			emitWindow = 0.9
-			totalLife = 2.4
-
-			local core = Instance.new("Part")
-			core.Shape = Enum.PartType.Ball
-			core.Material = Enum.Material.Neon
-			core.Color = Color3.fromRGB(70, 25, 140)
-			core.Size = Vector3.new(2.4, 2.4, 2.4)
-			core.Anchored = true
-			core.CanCollide = false
-			core.CanQuery = false
-			core.CastShadow = false
-			core.CFrame = CFrame.new(position)
-			core.Parent = fxFolder
-			table.insert(extras, core)
-
-			local swirl = Instance.new("PointLight")
-			swirl.Color = Color3.fromRGB(150, 90, 255)
-			swirl.Range = 34
-			swirl.Brightness = 4
-			swirl.Parent = anchor
-
-			-- Matter spiralling inwards: negative speed drags particles onto the core.
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(210, 165, 255), Color3.fromRGB(60, 15, 120)),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.2),
-					NumberSequenceKeypoint.new(1, 4),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.1),
-					NumberSequenceKeypoint.new(1, 0.25),
-				}),
-				Lifetime = NumberRange.new(0.8, 1.2),
-				Rate = 170,
-				Speed = NumberRange.new(-42, -16),
-				SpreadAngle = Vector2.new(180, 180),
-				RotSpeed = NumberRange.new(-300, 300),
-				LightEmission = 1,
-			})
-		elseif selected == "Tornado" then
-			emitWindow = 0.9
-			totalLife = 2.8
-
-			-- Translucent funnel the debris spins inside of.
-			local funnel = Instance.new("Part")
-			funnel.Material = Enum.Material.ForceField
-			funnel.Color = Color3.fromRGB(200, 215, 235)
-			funnel.Size = Vector3.new(6, 16, 6)
-			funnel.Transparency = 0.85
-			funnel.Anchored = true
-			funnel.CanCollide = false
-			funnel.CanQuery = false
-			funnel.CastShadow = false
-			funnel.CFrame = CFrame.new(position + Vector3.new(0, 8, 0))
-			funnel.Parent = fxFolder
-			table.insert(extras, funnel)
-
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/smoke_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(150, 160, 175), Color3.fromRGB(235, 240, 250)),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 1.5),
-					NumberSequenceKeypoint.new(1, 5),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.4),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(0.7, 1.1),
-				Rate = 140,
-				Speed = NumberRange.new(16, 30),
-				SpreadAngle = Vector2.new(8, 8),
-				RotSpeed = NumberRange.new(-500, 500),
-				Acceleration = Vector3.new(0, 40, 0),
-			})
-		elseif selected == "Snow" then
-			emitWindow = 0.4
-			totalLife = 2.4
-
-			local cold = Instance.new("PointLight")
-			cold.Color = Color3.fromRGB(190, 225, 255)
-			cold.Range = 24
-			cold.Brightness = 3
-			cold.Parent = anchor
-
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(190, 225, 255)),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.6),
-					NumberSequenceKeypoint.new(1, 1.4),
-				}),
-				Transparency = NumberSequence.new(0.1),
-				Lifetime = NumberRange.new(0.9, 1.5),
-				Rate = 180,
-				Speed = NumberRange.new(6, 16),
-				SpreadAngle = Vector2.new(180, 180),
-				Rotation = NumberRange.new(0, 360),
-				RotSpeed = NumberRange.new(-180, 180),
-				Acceleration = Vector3.new(0, -6, 0),
-				LightEmission = 0.6,
-			})
-		elseif selected == "Hearts" then
-			emitWindow = 0.3
-			totalLife = 2.2
-
-			local love = Instance.new("PointLight")
-			love.Color = Color3.fromRGB(255, 110, 170)
-			love.Range = 22
-			love.Brightness = 3
-			love.Parent = anchor
-
-			-- Floating hearts that drift upward.
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 150)),
-					ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 195, 225)),
-				}),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 1.4),
-					NumberSequenceKeypoint.new(1, 0.5),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.05),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(0.9, 1.4),
-				Rate = 110,
-				Speed = NumberRange.new(8, 18),
-				SpreadAngle = Vector2.new(60, 60),
-				Rotation = NumberRange.new(0, 360),
-				RotSpeed = NumberRange.new(-120, 120),
-				Acceleration = Vector3.new(0, 12, 0),
-				LightEmission = 0.8,
-			})
-		elseif selected == "Slash" then
-			emitWindow = 0.12
-			totalLife = 0.9
-
-			local flash = Instance.new("PointLight")
-			flash.Color = Color3.fromRGB(255, 255, 255)
-			flash.Range = 22
-			flash.Brightness = 5
-			flash.Parent = anchor
-
-			-- Two crossed neon blades through the impact point.
-			for i = 1, 2 do
-				local blade = Instance.new("Part")
-				blade.Anchored = true
-				blade.CanCollide = false
-				blade.CanQuery = false
-				blade.CastShadow = false
-				blade.Material = Enum.Material.Neon
-				blade.Color = Color3.fromRGB(255, 255, 255)
-				blade.Size = Vector3.new(0.18, 0.18, 10)
-				blade.CFrame = CFrame.new(position) * CFrame.Angles(math.rad(25), math.rad(45 * i), 0)
-				blade.Parent = fxFolder
-				table.insert(extras, blade)
-			end
-
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(180, 220, 255)),
-				Size = NumberSequence.new(1.2),
-				Transparency = NumberSequence.new(0.1),
-				Lifetime = NumberRange.new(0.2, 0.4),
-				Rate = 120,
-				Speed = NumberRange.new(14, 28),
-				SpreadAngle = Vector2.new(180, 180),
-				LightEmission = 1,
-			})
-		elseif selected == "Nuke" then
-			emitWindow = 0.35
-			totalLife = 2.6
-
-			local blast = Instance.new("PointLight")
-			blast.Color = Color3.fromRGB(255, 210, 140)
-			blast.Range = 46
-			blast.Brightness = 6
-			blast.Parent = anchor
-			task.delay(0.5, function()
-				if blast.Parent then blast:Destroy() end
-			end)
-
-			-- Expanding fireball plus the shockwave dust it kicks up.
-			local ball = Instance.new("Part")
-			ball.Shape = Enum.PartType.Ball
-			ball.Material = Enum.Material.Neon
-			ball.Color = Color3.fromRGB(255, 180, 90)
-			ball.Size = Vector3.new(1, 1, 1)
-			ball.Anchored = true
-			ball.CanCollide = false
-			ball.CanQuery = false
-			ball.CastShadow = false
-			ball.CFrame = CFrame.new(position)
-			ball.Parent = fxFolder
-			table.insert(extras, ball)
-			task.spawn(function()
-				for i = 1, 12 do
-					if not ball.Parent then return end
-					local s = 1 + i * 1.9
-					ball.Size = Vector3.new(s, s, s)
-					ball.Transparency = 0.15 + i * 0.06
-					task.wait(0.04)
-				end
-			end)
-
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/fire_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(255, 240, 170), Color3.fromRGB(170, 45, 0)),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 3),
-					NumberSequenceKeypoint.new(1, 9),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.15),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(0.5, 0.9),
-				Rate = 260,
-				Speed = NumberRange.new(10, 34),
-				SpreadAngle = Vector2.new(180, 180),
-				LightEmission = 1,
-			})
-
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/smoke_main.dds",
-				Color = ColorSequence.new(Color3.fromRGB(80, 70, 60), Color3.fromRGB(160, 145, 125)),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 5),
-					NumberSequenceKeypoint.new(1, 16),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.55),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(1, 1.6),
-				Rate = 90,
-				Speed = NumberRange.new(8, 18),
-				SpreadAngle = Vector2.new(180, 180),
-			})
-		elseif selected == "Soul" then
-			emitWindow = 0.5
-			totalLife = 2.6
-
-			local eerie = Instance.new("PointLight")
-			eerie.Color = Color3.fromRGB(120, 255, 210)
-			eerie.Range = 28
-			eerie.Brightness = 3.5
-			eerie.Parent = anchor
-			task.delay(0.6, function()
-				if eerie.Parent then eerie:Destroy() end
-			end)
-
-			-- Green wisps that rise slowly and drift, like a soul leaving.
-			addEmitter(anchor, {
-				Texture = "rbxasset://textures/particles/sparkles_main.dds",
-				Color = ColorSequence.new({
-					ColorSequenceKeypoint.new(0, Color3.fromRGB(190, 255, 235)),
-					ColorSequenceKeypoint.new(1, Color3.fromRGB(40, 150, 120)),
-				}),
-				Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.5),
-					NumberSequenceKeypoint.new(1, 3),
-				}),
-				Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.15),
-					NumberSequenceKeypoint.new(1, 1),
-				}),
-				Lifetime = NumberRange.new(1.1, 1.7),
-				Rate = 90,
-				Speed = NumberRange.new(2, 6),
-				SpreadAngle = Vector2.new(40, 40),
-				Rotation = NumberRange.new(0, 360),
-				RotSpeed = NumberRange.new(-60, 60),
-				Acceleration = Vector3.new(0, 9, 0),
-				LightEmission = 1,
-			})
 		end
 
 		-- Stop emitting after the window, then let the particles fade out.
@@ -4336,11 +2771,6 @@ do
 	-- Which wear colours are active is chosen from one shared multi-select
 	-- dropdown ("Head Wear", "Body Wear", "Pants Wear", "Back Wear")
 	local function isWearColorOn(category)
-		-- "Color Cosmetics" is the master switch; the category dropdown only
-		-- decides which pieces get tinted once it is on.
-		if not (Toggles.CosmeticColorChange and Toggles.CosmeticColorChange.Value) then
-			return false
-		end
 		local sel = Options.WearColorSelect and Options.WearColorSelect.Value
 		return typeof(sel) == "table" and sel[category] == true
 	end
@@ -4434,9 +2864,6 @@ do
 	local function setBloomActive(active)
 		local lighting = game:GetService("Lighting")
 		local bloom = lighting:FindFirstChild("XenoGlowBloom")
-		-- Boost Performance skips the bloom: it is a full-screen post-process
-		-- pass, which is one of the most expensive things we add on mobile.
-		if active and TSG_LowGraphics and TSG_LowGraphics() then active = false end
 		if active then
 			if not bloom or not bloom:IsA("BloomEffect") then
 				if bloom then bloom:Destroy() end
@@ -4770,24 +3197,18 @@ do
 		end)
 	end
 
-	-- Head piece tinting is driven by the master switch and the category
-	-- dropdown together, so either one changing re-evaluates the head pieces.
-	local headColorWasOn = false
-	local function refreshHeadColor()
-		local on = isWearColorOn("Head Wear")
-		if on == headColorWasOn then return end
-		headColorWasOn = on
-		if on then
-			applyHeadColor()
-		else
-			restoreHeadColors()
-		end
-	end
-	if Toggles.CosmeticColorChange then
-		Toggles.CosmeticColorChange:OnChanged(refreshHeadColor)
-	end
 	if Options.WearColorSelect then
-		Options.WearColorSelect:OnChanged(refreshHeadColor)
+		local headColorWasOn = false
+		Options.WearColorSelect:OnChanged(function()
+			local on = isWearColorOn("Head Wear")
+			if on == headColorWasOn then return end
+			headColorWasOn = on
+			if on then
+				applyHeadColor()
+			else
+				restoreHeadColors()
+			end
+		end)
 	end
 
 	-- ============================================================
@@ -5261,24 +3682,18 @@ do
 			end)
 		end
 
-		-- Tinting for this wear type follows the master switch and the category
-		-- dropdown, so either one changing re-evaluates the worn pieces.
-		local colorWasOn = false
-		local function refreshWearColor()
-			local on = wearColorEnabled()
-			if on == colorWasOn then return end
-			colorWasOn = on
-			if on then
-				applyWearColor()
-			else
-				restoreWearColors()
-			end
-		end
 		if Options.WearColorSelect then
-			Options.WearColorSelect:OnChanged(refreshWearColor)
-		end
-		if Toggles.CosmeticColorChange then
-			Toggles.CosmeticColorChange:OnChanged(refreshWearColor)
+			local colorWasOn = false
+			Options.WearColorSelect:OnChanged(function()
+				local on = wearColorEnabled()
+				if on == colorWasOn then return end
+				colorWasOn = on
+				if on then
+					applyWearColor()
+				else
+					restoreWearColors()
+				end
+			end)
 		end
 	end
 
@@ -5411,315 +3826,6 @@ do
 		end,
 	})
 end
-
--- Recolours the player's currently equipped gear (Head / Shirt / Pants / Bag).
--- Works on whatever the character is actually wearing in-game, not on the
--- script's own cosmetics. Original colours are restored when the checkbox is
--- turned off, and the colour is re-applied after respawning.
-do
-	-- Standard Roblox body parts / instances we never want to treat as an
-	-- equipped item model.
-	local STANDARD_NAMES = {
-		Head = true, UpperTorso = true, LowerTorso = true, Torso = true,
-		LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
-		RightUpperArm = true, RightLowerArm = true, RightHand = true,
-		["Left Arm"] = true, ["Right Arm"] = true,
-		LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
-		RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
-		["Left Leg"] = true, ["Right Leg"] = true,
-		HumanoidRootPart = true, Humanoid = true,
-	}
-
-	-- Attributes the script stamps onto its own cosmetics so we can leave
-	-- them alone.
-	local SCRIPT_ATTRIBUTES = {
-		"XenoCosmetic", "XenoBodyWear", "XenoPantsWear",
-		"XenoBackWear", "XenoGlow", "XenoHairTransparency",
-	}
-
-	local function isScriptOwned(obj)
-		for _, attr in ipairs(SCRIPT_ATTRIBUTES) do
-			if obj:GetAttribute(attr) ~= nil then return true end
-		end
-		return false
-	end
-
-	local originalColors = {} -- [part] = original Color3 (gear)
-	local bodyOriginals = {} -- [part] = original Color3 (body)
-
-	local function storeOriginal(store, part)
-		if store[part] == nil then
-			store[part] = part.Color
-		end
-	end
-
-	-- Restore every part we tinted and forget them, so a changed target or a
-	-- respawn never leaves stale colours behind.
-	local function restoreStore(store)
-		for part, color in pairs(store) do
-			if part.Parent then
-				part.Color = color
-			end
-			store[part] = nil
-		end
-	end
-
-	local function collectParts(root)
-		local parts = {}
-		if not root then return parts end
-		if root:IsA("BasePart") then
-			table.insert(parts, root)
-		end
-		for _, desc in ipairs(root:GetDescendants()) do
-			if desc:IsA("BasePart") then
-				table.insert(parts, desc)
-			end
-		end
-		return parts
-	end
-
-	-- Find a non-standard, non-script-owned model/accessory in the character
-	-- whose name contains one of the given keywords (plain, case-insensitive).
-	local function findEquippedModel(keywords)
-		local character = getCharacter()
-		if not character then return nil end
-		for _, obj in ipairs(character:GetChildren()) do
-			if not STANDARD_NAMES[obj.Name]
-				and not obj:IsA("Shirt")
-				and not obj:IsA("Pants")
-				and not obj:IsA("Humanoid")
-				and not obj:IsA("Backpack")
-				and not isScriptOwned(obj) then
-				local name = obj.Name:lower()
-				for _, kw in ipairs(keywords) do
-					if name:find(kw:lower(), 1, true) then
-						return obj
-					end
-				end
-			end
-		end
-		return nil
-	end
-
-	local function partsFromNameList(names)
-		local character = getCharacter()
-		if not character then return {} end
-		local out = {}
-		for _, name in ipairs(names) do
-			local p = character:FindFirstChild(name)
-			if p and p:IsA("BasePart") and not isScriptOwned(p) then
-				table.insert(out, p)
-			end
-		end
-		return out
-	end
-
-	local function getTargetParts(targets)
-		local character = getCharacter()
-		if not character then return {} end
-		local parts = {}
-
-		if targets["Head"] then
-			for _, p in ipairs(collectParts(character:FindFirstChild("Head"))) do
-				if not isScriptOwned(p) then table.insert(parts, p) end
-			end
-		end
-
-		if targets["Shirt"] then
-			local model = findEquippedModel({
-				"shirt", "armor", "armour", "chest", "torso",
-				"top", "jacket", "vest", "plate",
-			})
-			if model then
-				for _, p in ipairs(collectParts(model)) do
-					if not isScriptOwned(p) then table.insert(parts, p) end
-				end
-			else
-				-- No shirt model found: tint the torso and arms, the area a
-				-- shirt normally covers.
-				for _, p in ipairs(partsFromNameList({
-					"UpperTorso", "LowerTorso", "Torso",
-					"LeftUpperArm", "LeftLowerArm", "LeftHand",
-					"RightUpperArm", "RightLowerArm", "RightHand",
-					"Left Arm", "Right Arm",
-				})) do
-					table.insert(parts, p)
-				end
-			end
-		end
-
-		if targets["Pants"] then
-			local model = findEquippedModel({
-				"pant", "leg", "bottom", "trouser", "short",
-			})
-			if model then
-				for _, p in ipairs(collectParts(model)) do
-					if not isScriptOwned(p) then table.insert(parts, p) end
-				end
-			else
-				for _, p in ipairs(partsFromNameList({
-					"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
-					"RightUpperLeg", "RightLowerLeg", "RightFoot",
-					"Left Leg", "Right Leg",
-				})) do
-					table.insert(parts, p)
-				end
-			end
-		end
-
-		if targets["Bag"] then
-			local model = findEquippedModel({
-				"bag", "back", "pack", "cape", "wing", "sack", "satchel",
-			})
-			if not model then
-				for _, obj in ipairs(character:GetChildren()) do
-					if obj:IsA("Accessory") and not isScriptOwned(obj) then
-						model = obj
-						break
-					end
-				end
-			end
-			if model then
-				for _, p in ipairs(collectParts(model)) do
-					if not isScriptOwned(p) then table.insert(parts, p) end
-				end
-			end
-		end
-
-		return parts
-	end
-
-	-- Normalise a multi-dropdown value into a name lookup set. Obsidian stores
-	-- the selection as { Name = true }; the array form is also tolerated.
-	local function selectedSet(set)
-		local out = {}
-		if type(set) == "table" then
-			for k, v in pairs(set) do
-				if v == true then
-					out[k] = true
-				elseif type(k) == "number" and type(v) == "string" then
-					out[v] = true
-				end
-			end
-		end
-		return out
-	end
-
-	-- The character's own body parts (R6 and R15 names).
-	local function bodyParts()
-		local character = getCharacter()
-		if not character then return {} end
-		local out = {}
-		for _, name in ipairs({
-			"Head", "UpperTorso", "LowerTorso", "Torso",
-			"LeftUpperArm", "LeftLowerArm", "LeftHand",
-			"RightUpperArm", "RightLowerArm", "RightHand",
-			"Left Arm", "Right Arm",
-			"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
-			"RightUpperLeg", "RightLowerLeg", "RightFoot",
-			"Left Leg", "Right Leg",
-		}) do
-			local p = character:FindFirstChild(name)
-			if p and p:IsA("BasePart") and not isScriptOwned(p) then
-				table.insert(out, p)
-			end
-		end
-		return out
-	end
-
-	local function applyRecolor()
-		local targets = selectedSet(Options.RecolorEquippedTarget and Options.RecolorEquippedTarget.Value)
-		local color = (Options.RecolorEquippedColor and Options.RecolorEquippedColor.Value) or Color3.fromRGB(255, 255, 255)
-		restoreStore(originalColors)
-		local seen = {}
-		for _, part in ipairs(getTargetParts(targets)) do
-			if not seen[part] then
-				seen[part] = true
-				storeOriginal(originalColors, part)
-				part.Color = color
-			end
-		end
-	end
-
-	local function restoreRecolor()
-		restoreStore(originalColors)
-	end
-
-	local function recolorIsOn()
-		return Toggles.RecolorEquipped and Toggles.RecolorEquipped.Value
-	end
-
-	local function applyBodyColor()
-		local color = (Options.BodyColorPicker and Options.BodyColorPicker.Value) or Color3.fromRGB(255, 255, 255)
-		restoreStore(bodyOriginals)
-		for _, part in ipairs(bodyParts()) do
-			storeOriginal(bodyOriginals, part)
-			part.Color = color
-		end
-	end
-
-	local function bodyColorIsOn()
-		return Toggles.BodyColorChange and Toggles.BodyColorChange.Value
-	end
-
-	Toggles.RecolorEquipped:OnChanged(function()
-		if recolorIsOn() then
-			applyRecolor()
-		else
-			restoreRecolor()
-		end
-	end)
-
-	Options.RecolorEquippedColor:OnChanged(function()
-		if recolorIsOn() then applyRecolor() end
-	end)
-
-	Options.RecolorEquippedTarget:OnChanged(function()
-		if recolorIsOn() then applyRecolor() end
-	end)
-
-	Toggles.BodyColorChange:OnChanged(function()
-		if bodyColorIsOn() then
-			applyBodyColor()
-		else
-			restoreStore(bodyOriginals)
-		end
-	end)
-
-	Options.BodyColorPicker:OnChanged(function()
-		if bodyColorIsOn() then applyBodyColor() end
-	end)
-
-	-- Reapply after the player respawns.
-	LocalPlayer.CharacterAdded:Connect(function()
-		task.wait(0.5)
-		if recolorIsOn() then applyRecolor() end
-		if bodyColorIsOn() then applyBodyColor() end
-	end)
-end
-
--- The two CONFIG checkboxes drive which rows underneath them are shown, but
--- Obsidian's :OnChanged keeps only one handler per element and the cosmetics
--- colour code above registers its own callback on both of them, which silently
--- replaced the updateConfigVisibility wiring done in the menu. Wrap whatever is
--- registered last so the checkbox still runs its own logic and refreshes the
--- rows, and do it down here so nothing can overwrite it again. Global on purpose:
--- the main chunk is at Luau's 200-local register limit.
-wireConfigVisibility = function()
-	local function chain(element, handler)
-		if not element or not element.OnChanged then return end
-		local previous = element.Changed
-		element:OnChanged(function(...)
-			if previous then pcall(previous, ...) end
-			handler(...)
-		end)
-	end
-
-	chain(Toggles.CosmeticColorChange, updateConfigVisibility)
-	chain(Toggles.RecolorEquipped, updateConfigVisibility)
-end
-
-wireConfigVisibility()
 
 local FunTabBox = Tabs.Main:AddLeftTabbox()
 local AttachTab = FunTabBox:AddTab("ATTACH", "link")
@@ -6013,6 +4119,11 @@ MainLeft:AddCheckbox("WalkOnWater", {
 	Default = false,
 })
 
+MainLeft:AddCheckbox("Noclip", {
+	Text = "Noclip",
+	Default = false,
+})
+
 MainLeft:AddCheckbox("FastPickup", {
 	Text = "Auto Pickup",
 	Default = false,
@@ -6300,12 +4411,16 @@ do
 		refreshStatsLabel()
 		statsRunning = true
 
-		track("SessionStats_Loop", RunService.RenderStepped:Connect(function()
+		local lastShownSecond = -1
+		track("SessionStats_Loop", RunService.Heartbeat:Connect(function()
 			if not statsRunning or not statsLabel then return end
 
 			local now = tick()
-			if now - statsLastLabel >= 0.25 then
-				statsLastLabel = now
+			if now - statsLastLabel < 0.5 then return end
+			statsLastLabel = now
+			local sec = math.floor(now - sessionStart)
+			if sec ~= lastShownSecond then
+				lastShownSecond = sec
 				refreshStatsLabel()
 			end
 		end))
@@ -6416,10 +4531,8 @@ do
 			perfFrames = 0
 			perfLastUpdate = now
 
-			local ping = 0
-			pcall(function()
-				ping = math.floor(LocalPlayer:GetNetworkPing() * 1000 + 0.5)
-			end)
+			local okPing, rawPing = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
+			local ping = (okPing and type(rawPing) == "number") and math.floor(rawPing * 1000 + 0.5) or 0
 
 			perfLabel.Text = string.format("PING %dms   FPS %d", ping, fps)
 		end))
@@ -6516,12 +4629,14 @@ do
 
 	local function watchPlayer(plr)
 		if not plr or not isAdmin(plr) then return end
-		plr.CharacterAdded:Connect(function(character)
+		local key = "AdminCham_Char_" .. tostring(plr.UserId or plr.Name)
+		disconnect(key)
+		track(key, plr.CharacterAdded:Connect(function(character)
 			if adminChamActive then
 				task.wait(0.1)
 				applyCham(character)
 			end
-		end)
+		end))
 		if plr.Character and adminChamActive then
 			applyCham(plr.Character)
 		end
@@ -6530,9 +4645,10 @@ do
 	for _, plr in ipairs(TSG_PlayerList) do
 		watchPlayer(plr)
 	end
-	Players.PlayerAdded:Connect(watchPlayer)
-	Players.PlayerRemoving:Connect(function(plr)
+	track("AdminCham_PlayerAdded", Players.PlayerAdded:Connect(watchPlayer))
+	track("AdminCham_PlayerRemoving", Players.PlayerRemoving:Connect(function(plr)
 		if isAdmin(plr) then
+			disconnect("AdminCham_Char_" .. tostring(plr.UserId or plr.Name))
 			removeCham(plr.Character)
 			Library:Notify({
 				Title = "ADMIN LEFT",
@@ -6540,7 +4656,7 @@ do
 				Time = 5,
 			})
 		end
-	end)
+	end))
 
 	Toggles.AdminCham:OnChanged(function()
 		adminChamActive = Toggles.AdminCham.Value
@@ -6771,7 +4887,7 @@ Toggles.InfiniteStamina:OnChanged(function()
 		local lastApply = 0
 		track("InfiniteStaminaPoll", RunService.Heartbeat:Connect(function()
 			local now = os.clock()
-			if now - lastApply < 0.25 then return end
+			if now - lastApply < 0.5 then return end
 			lastApply = now
 			if Toggles.InfiniteStamina and Toggles.InfiniteStamina.Value then
 				applyCharacterModuleToggles()
@@ -6795,6 +4911,34 @@ Toggles.InfiniteJump:OnChanged(function()
 		Library:Notify({ Title = "Infinite Jump", Description = "Enabled", Time = 2 })
 	end
 end)
+
+do
+	local noclipParts = {}
+	Toggles.Noclip:OnChanged(function()
+		disconnect("Noclip")
+		table.clear(noclipParts)
+		if Toggles.Noclip.Value then
+			track("Noclip", RunService.Stepped:Connect(function()
+				local character = getCharacter()
+				if not character then
+					return
+				end
+				for _, part in ipairs(character:GetDescendants()) do
+					if part:IsA("BasePart") and part.CanCollide then
+						part.CanCollide = false
+						noclipParts[part] = true
+					end
+				end
+			end))
+		else
+			for part in pairs(noclipParts) do
+				if part.Parent then
+					part.CanCollide = true
+				end
+			end
+		end
+	end)
+end
 
 Toggles.NoFallDamage:OnChanged(function()
 	disconnect("NoFallDamage")
@@ -6993,17 +5137,20 @@ function TSG_BossHitNamecall(previous, ...)
 			or rawequal(self, TSG.MeleeAI)
 			or rawequal(self, TSG.MeleeAnimalRemote)
 		if isMeleeHit then
-			local hitArgs = table.pack(select(2, ...))
-			task.defer(function()
-				pcall(function()
-					if Xeno_PlayHitSound then
-						Xeno_PlayHitSound()
+			local soundOn = Toggles.HitSound and Toggles.HitSound.Value
+			local effectSelected = Options.HitEffectSelect and Options.HitEffectSelect.Value
+			local effectOn = effectSelected ~= nil and effectSelected ~= "None"
+			local hitTarget = effectOn and select(3, ...) or nil
+			if soundOn or effectOn then
+				task.defer(function()
+					if soundOn and Xeno_PlayHitSound then
+						pcall(Xeno_PlayHitSound)
 					end
-					if Xeno_PlayHitEffect then
-						Xeno_PlayHitEffect(hitArgs)
+					if effectOn and Xeno_PlayHitEffect then
+						pcall(Xeno_PlayHitEffect, hitTarget)
 					end
 				end)
-			end)
+			end
 		end
 	end
 
@@ -7117,7 +5264,7 @@ local function trackDroppedItem(item)
 	end
 end
 
-CollectionService:GetInstanceAddedSignal("DROPPED_ITEM"):Connect(trackDroppedItem)
+track("DroppedItemAdded", CollectionService:GetInstanceAddedSignal("DROPPED_ITEM"):Connect(trackDroppedItem))
 for _, item in ipairs(CollectionService:GetTagged("DROPPED_ITEM")) do
 	trackDroppedItem(item)
 end
@@ -7143,7 +5290,7 @@ local function tryAutoPickup()
 	local rootPos = getFeetPosition() or root.Position
 	local candidateItems = {}
 
-	for _, item in ipairs(CollectionService:GetTagged("DROPPED_ITEM")) do
+	for item in pairs(droppedItemSpawnTimes) do
 		if item and item.Parent and canAutoPickup(item, isVacuum) then
 			local dist = (item.Position - rootPos).Magnitude
 			if dist <= maxRange then
@@ -7271,12 +5418,15 @@ local function tryEatCustom()
 		lastEatCustom = tick()
 		local selectedFood = Options and Options.AutoEatFood and Options.AutoEatFood.Value
 		local foodId = FoodIdMap[selectedFood] or 210
-		pcall(function()
-			local args = {
-				foodId
-			}
-			game:GetService("ReplicatedStorage"):WaitForChild("remoteInterface"):WaitForChild("interactions"):WaitForChild("eat"):FireServer(unpack(args))
-		end)
+		local eatRemote = TSG.EatRemote
+		if not eatRemote or not eatRemote.Parent then
+			eatRemote = interactionsFolder and interactionsFolder:FindFirstChild("eat")
+				or resolvePath(ReplicatedStorage, "remoteInterface", "interactions", "eat")
+			TSG.EatRemote = eatRemote
+		end
+		if eatRemote then
+			pcall(eatRemote.FireServer, eatRemote, foodId)
+		end
 	end
 end
 
@@ -7336,7 +5486,10 @@ do
 	if LocalPlayer.Character then
 		hookAutoEatSlotChar(LocalPlayer.Character)
 	end
-	track("AutoEatSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAutoEatSlotChar))
+	track("AutoEatSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+		hookAutoEatSlotChar(char)
+		task.delay(0.2, updateAutoEatSlotState)
+	end))
 
 	if Options.AutoEatSlot then
 		Options.AutoEatSlot:OnChanged(function()
@@ -7348,7 +5501,7 @@ do
 		Toggles.AutoEatSlotSystem:OnChanged(function()
 			disconnect("AutoEatSlot_Poll")
 			if Toggles.AutoEatSlotSystem.Value then
-				track("AutoEatSlot_Poll", RunService.Heartbeat:Connect(updateAutoEatSlotState))
+				track("AutoEatSlot_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAutoEatSlotState))
 				updateAutoEatSlotState()
 				Library:Notify({ Title = "Auto Heal Slot System", Description = "Enabled", Time = 2 })
 			else
@@ -8255,38 +6408,38 @@ function BindShieldAnimRespawn(character)
 			StopShieldAnimation()
 		end)
 	end
-	-- Watch the held tool so a swing can hide the pose.
+	-- Watch the held tool so a swing can hide the pose, and inherit the no-swing-while-blocking state.
 	for _, child in ipairs(character:GetChildren()) do
 		BindSwingAnimStop(child)
 	end
-	character.ChildAdded:Connect(BindSwingAnimStop)
-	-- A freshly equipped tool must inherit the no-swing-while-blocking state.
-	character.ChildAdded:Connect(function(child)
+	disconnect("ShieldAnim_CharChildAdded")
+	track("ShieldAnim_CharChildAdded", character.ChildAdded:Connect(function(child)
+		BindSwingAnimStop(child)
 		if child:IsA("Tool") then
 			task.defer(ApplySwingBlock)
 		end
-	end)
+	end))
 	ApplySwingBlock()
 end
 
 if LocalPlayer.Character then
 	task.spawn(BindShieldAnimRespawn, LocalPlayer.Character)
 end
-LocalPlayer.CharacterAdded:Connect(function(character)
+track("ShieldAnim_CharacterAdded", LocalPlayer.CharacterAdded:Connect(function(character)
 	task.spawn(BindShieldAnimRespawn, character)
 	task.delay(0.5, UpdateShieldAnimation)
-end)
+end))
 
 -- Re-evaluate the pose whenever the held tool changes (sword equipped/unequipped).
-LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(UpdateShieldAnimation)
+track("ShieldAnim_EquippedTool", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(UpdateShieldAnimation))
 
 -- Manual blocking (right-click / shield button) flips this attribute, so mirror
 -- it into the no-swing-while-blocking state too.
-LocalPlayer:GetAttributeChangedSignal("IsShieldingClient"):Connect(function()
+track("ShieldAnim_IsShielding", LocalPlayer:GetAttributeChangedSignal("IsShieldingClient"):Connect(function()
 	if ApplySwingBlock then
 		ApplySwingBlock()
 	end
-end)
+end))
 
 updateImmortalModeVisibility = function()
 	local isImmortal = (Toggles.ImmortalMode and Toggles.ImmortalMode.Value) or false
@@ -8578,7 +6731,7 @@ SilentAimHK.Main:AddSlider("SAHKFOVRadius", {
 	Text = "FOV Radius",
 	Default = 100,
 	Min = 0,
-	Max = 1000,
+	Max = 500,
 	Rounding = 0,
 	Compact = true,
 })
@@ -8602,16 +6755,11 @@ SilentAimHK.Main:AddDropdown("SAHKTargetPart", {
 
 SilentAimHK.Main:AddSlider("SAHKTargetRange", {
 	Text = "Target Range",
-	Default = 10000,
+	Default = 500,
 	Min = 5,
-	Max = 10000,
+	Max = 1000,
 	Rounding = 0,
 	Compact = true,
-})
-
-SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
-	Text = "360 Mode",
-	Default = false,
 })
 
 SilentAimHK.Config:AddCheckbox("SAHKWallBang", {
@@ -8624,13 +6772,9 @@ SilentAimHK.Config:AddCheckbox("SAHKBulletTeleport", {
 	Default = false,
 })
 
--- Who silent aim is allowed to lock onto. "All" keeps the current behaviour
--- (anyone but you and your teammates); picking a name restricts it to that one
--- player. The list is kept up to date as players join / leave.
-SilentAimHK.Config:AddDropdown("SAHKTargetPlayer", {
-	Text = "Target Player",
-	Values = {"All"},
-	Default = "All",
+SilentAimHK.Config:AddCheckbox("SAHK360Mode", {
+	Text = "360 Mode",
+	Default = false,
 })
 
 SilentAimHK.Config:AddDropdown("SAHKPriorityMode", {
@@ -8746,30 +6890,41 @@ CombatReach:AddDropdown("ReachIgnore", {
 	AllowNull = true,
 })
 
+TSG_MOVEMENT_ANIM_IDS = {
+	"507766388", "507777826", "507767714",
+	"507765000", "507767968", "507765644",
+	"507784064", "180426354", "180415668",
+	"180419271", "180435571",
+}
+TSG_SwingAnimCache = {}
+
 local function isSwingAnimation(trackObj)
 	local anim = trackObj.Animation
 	if not anim then return false end
 	local id = anim.AnimationId
-	local name = anim.Name:lower()
-
-	if name:find("idle") or name:find("walk") or name:find("run") or name:find("jump") or
-	   name:find("fall") or name:find("swim") or name:find("climb") or name:find("strafe") then
-		return false
+	local rawName = anim.Name
+	local cacheKey = id .. "|" .. rawName
+	local cached = TSG_SwingAnimCache[cacheKey]
+	if cached ~= nil then
+		return cached
 	end
 
-	local movementIds = {
-		["507766388"] = true, ["507777826"] = true, ["507767714"] = true,
-		["507765000"] = true, ["507767968"] = true, ["507765644"] = true,
-		["507784064"] = true, ["180426354"] = true, ["180415668"] = true,
-		["180419271"] = true, ["180435571"] = true
-	}
-	for mId in pairs(movementIds) do
-		if id:find(mId) then
-			return false
+	local name = rawName:lower()
+	local isSwing = true
+	if name:find("idle", 1, true) or name:find("walk", 1, true) or name:find("run", 1, true) or name:find("jump", 1, true) or
+	   name:find("fall", 1, true) or name:find("swim", 1, true) or name:find("climb", 1, true) or name:find("strafe", 1, true) then
+		isSwing = false
+	else
+		for i = 1, #TSG_MOVEMENT_ANIM_IDS do
+			if id:find(TSG_MOVEMENT_ANIM_IDS[i], 1, true) then
+				isSwing = false
+				break
+			end
 		end
 	end
 
-	return true
+	TSG_SwingAnimCache[cacheKey] = isSwing
+	return isSwing
 end
 
 local isShielding = false
@@ -9013,8 +7168,13 @@ do
 		refreshShieldHud()
 		shieldHudRunning = true
 
-		track("ShieldHud_Loop", RunService.RenderStepped:Connect(function()
+		local lastShieldHudUpdate = 0
+		track("ShieldHud_Loop", RunService.Heartbeat:Connect(function()
 			if not shieldHudRunning or not shieldHudLabel then return end
+			local now = os.clock()
+			local interval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.1 or 0.05
+			if now - lastShieldHudUpdate < interval then return end
+			lastShieldHudUpdate = now
 			refreshShieldHud()
 		end))
 
@@ -9035,7 +7195,11 @@ Toggles.ShieldNotifier:OnChanged(function()
 		return
 	end
 
+	local lastCheck = 0
 	track("ShieldNotifier", RunService.Heartbeat:Connect(function()
+		local nowClock = os.clock()
+		if nowClock - lastCheck < 0.1 then return end
+		lastCheck = nowClock
 		local now = tick()
 		local broken = now < (ShieldParryBreakUntil or 0) or now < (ShieldAnimBreakUntil or 0)
 		if broken and not wasBroken then
@@ -9309,11 +7473,12 @@ Toggles.Advance:OnChanged(function()
 		if LocalPlayer.Character then
 			hookAdvanceChar(LocalPlayer.Character)
 		end
-		track("AdvanceSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAdvanceChar))
-
-		track("AdvanceSlotCheck", RunService.Heartbeat:Connect(function()
-			updateAdvanceState()
+		track("AdvanceSlot_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+			hookAdvanceChar(char)
+			task.delay(0.2, updateAdvanceState)
 		end))
+
+		track("AdvanceSlotCheck", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAdvanceState))
 
 		updateAdvanceState()
 	else
@@ -9359,6 +7524,7 @@ local function getBestMeleeWeapon()
 end
 
 local lastKillAuraHit = 0
+TSG_LastKillAuraScan = 0
 
 local function attackNPC(slot, target)
 	if not target then return end
@@ -9391,8 +7557,10 @@ local function attackNPC(slot, target)
 end
 
 local function killAuraLoop()
+	local now = tick()
 	local delayVal = Options.KillAuraSpeed and Options.KillAuraSpeed.Value or 0.2
-	if not isAlive() or tick() - lastKillAuraHit < delayVal then return end
+	if now - lastKillAuraHit < delayVal or now - TSG_LastKillAuraScan < 0.08 or not isAlive() then return end
+	TSG_LastKillAuraScan = now
 	local root = getRootPart()
 	if not root then return end
 
@@ -9404,13 +7572,9 @@ local function killAuraLoop()
 
 	local maxAngle = (Options.KillAuraAngle and Options.KillAuraAngle.Value) or 90
 	local coneThreshold = math.cos(math.rad(maxAngle / 2))
-	local forward = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
-
-	local function passesAngleCheck(targetPos)
-		local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
-		if dir.Magnitude <= 0 then return true end
-		return forward:Dot(dir.Unit) >= coneThreshold
-	end
+	local lookVec = root.CFrame.LookVector
+	local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
+	local forward = flatLook.Magnitude > 0 and flatLook.Unit or lookVec
 
 	local targetSetting = Options.KillAuraTarget and Options.KillAuraTarget.Value or "All"
 	local priority = (Options.KillAuraPriority and Options.KillAuraPriority.Value) or "Normal"
@@ -9432,36 +7596,41 @@ local function killAuraLoop()
 	-- Scan Players
 	for _, otherPlayer in ipairs(TSG_PlayerList) do
 		if otherPlayer ~= LocalPlayer and otherPlayer.Character then
-			local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
-			local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
-			if otherHum and otherHum.Health > 0 and otherRoot then
-				if targetSetting == "All" or otherPlayer.Name == targetSetting then
-					local d = (otherRoot.Position - pos).Magnitude
-					if d < range and passesAngleCheck(otherRoot.Position) then
-						if useLowestHP then
-							if otherHum.Health < lowestHealth then
-								lowestHealth = otherHum.Health
-								lowestHPTarget = otherPlayer.Character
-							end
-						elseif useHighestHP then
-							if otherHum.Health > highestHealth then
-								highestHealth = otherHum.Health
-								highestHPTarget = otherPlayer.Character
-							end
-						elseif useCrosshair then
-							if crosshairForward then
-								local dir = otherRoot.Position - crosshairCamPos
-								if dir.Magnitude > 0 then
-									local dot = crosshairForward:Dot(dir.Unit)
-									if dot > bestCrosshairDot then
-										bestCrosshairDot = dot
-										crosshairTarget = otherPlayer.Character
+			if targetSetting == "All" or otherPlayer.Name == targetSetting then
+				local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+				local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart") or otherPlayer.Character.PrimaryPart
+				if otherHum and otherHum.Health > 0 and otherRoot then
+					local targetPos = otherRoot.Position
+					local d = (targetPos - pos).Magnitude
+					if d < range then
+						local dir = Vector3.new(targetPos.X - pos.X, 0, targetPos.Z - pos.Z)
+						local inAngle = dir.Magnitude <= 0 or forward:Dot(dir.Unit) >= coneThreshold
+						if inAngle then
+							if useLowestHP then
+								if otherHum.Health < lowestHealth then
+									lowestHealth = otherHum.Health
+									lowestHPTarget = otherPlayer.Character
+								end
+							elseif useHighestHP then
+								if otherHum.Health > highestHealth then
+									highestHealth = otherHum.Health
+									highestHPTarget = otherPlayer.Character
+								end
+							elseif useCrosshair then
+								if crosshairForward then
+									local cDir = targetPos - crosshairCamPos
+									if cDir.Magnitude > 0 then
+										local dot = crosshairForward:Dot(cDir.Unit)
+										if dot > bestCrosshairDot then
+											bestCrosshairDot = dot
+											crosshairTarget = otherPlayer.Character
+										end
 									end
 								end
+							elseif d < nearestDist then
+								nearestDist = d
+								nearestTarget = otherPlayer.Character
 							end
-						elseif d < nearestDist then
-							nearestDist = d
-							nearestTarget = otherPlayer.Character
 						end
 					end
 				end
@@ -9576,6 +7745,10 @@ Toggles.AutoSwing:OnChanged(function()
 end)
 
 
+TSG_WHITE_BRICKCOLOR = BrickColor.new("White")
+TSG_TeammateCache = setmetatable({}, { __mode = "k" })
+TSG_MyKingdomCache = { t = 0, val = nil }
+
 function isTeammate(otherPlayer)
 	if not otherPlayer or otherPlayer == LocalPlayer then
 		return true
@@ -9584,42 +7757,66 @@ function isTeammate(otherPlayer)
 	if LocalPlayer.Team and otherPlayer.Team and LocalPlayer.Team == otherPlayer.Team then
 		return true
 	end
-	if LocalPlayer.TeamColor and otherPlayer.TeamColor and LocalPlayer.TeamColor == otherPlayer.TeamColor and LocalPlayer.TeamColor ~= BrickColor.new("White") then
+	if LocalPlayer.TeamColor and otherPlayer.TeamColor and LocalPlayer.TeamColor == otherPlayer.TeamColor and LocalPlayer.TeamColor ~= TSG_WHITE_BRICKCOLOR then
 		return true
 	end
 
-	local success, kingdomMatch = pcall(function()
-		if TSG.ClientData and TSG.ClientData.getKingdom then
-			local myKingdom = TSG.ClientData.getKingdom()
+	local now = os.clock()
+	local cached = TSG_TeammateCache[otherPlayer]
+	if cached and now - cached.t < 0.35 then
+		return cached.v
+	end
+
+	local result = false
+	if TSG.ClientData and TSG.ClientData.getKingdom then
+		local myKingdom
+		if now - TSG_MyKingdomCache.t < 0.5 then
+			myKingdom = TSG_MyKingdomCache.val
+		else
+			local ok, k = pcall(TSG.ClientData.getKingdom)
+			myKingdom = ok and k or nil
+			TSG_MyKingdomCache.t = now
+			TSG_MyKingdomCache.val = myKingdom
+		end
+		if myKingdom then
 			local otherKingdom = otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Team")
-			if myKingdom and otherKingdom and myKingdom == otherKingdom then
-				return true
+			if otherKingdom and myKingdom == otherKingdom then
+				result = true
 			end
 		end
-		return false
-	end)
-	if success and kingdomMatch then
-		return true
 	end
 
-	local myClan = LocalPlayer:GetAttribute("Clan") or LocalPlayer:GetAttribute("Kingdom") or LocalPlayer:GetAttribute("Tribe") or LocalPlayer:GetAttribute("Team")
-	local theirClan = otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Tribe") or otherPlayer:GetAttribute("Team")
-	if myClan and theirClan and myClan ~= "" and myClan == theirClan then
-		return true
-	end
-
-	if LocalPlayer.Character and otherPlayer.Character then
-		local myCharClan = LocalPlayer.Character:GetAttribute("Clan") or LocalPlayer.Character:GetAttribute("Kingdom") or LocalPlayer.Character:GetAttribute("Tribe")
-		local theirCharClan = otherPlayer.Character:GetAttribute("Clan") or otherPlayer.Character:GetAttribute("Kingdom") or otherPlayer.Character:GetAttribute("Tribe")
-		if myCharClan and theirCharClan and myCharClan ~= "" and myCharClan == theirCharClan then
-			return true
+	if not result then
+		local myClan = LocalPlayer:GetAttribute("Clan") or LocalPlayer:GetAttribute("Kingdom") or LocalPlayer:GetAttribute("Tribe") or LocalPlayer:GetAttribute("Team")
+		local theirClan = otherPlayer:GetAttribute("Clan") or otherPlayer:GetAttribute("Kingdom") or otherPlayer:GetAttribute("Tribe") or otherPlayer:GetAttribute("Team")
+		if myClan and theirClan and myClan ~= "" and myClan == theirClan then
+			result = true
 		end
 	end
 
-	return false
+	if not result then
+		local myChar = LocalPlayer.Character
+		local theirChar = otherPlayer.Character
+		if myChar and theirChar then
+			local myCharClan = myChar:GetAttribute("Clan") or myChar:GetAttribute("Kingdom") or myChar:GetAttribute("Tribe")
+			local theirCharClan = theirChar:GetAttribute("Clan") or theirChar:GetAttribute("Kingdom") or theirChar:GetAttribute("Tribe")
+			if myCharClan and theirCharClan and myCharClan ~= "" and myCharClan == theirCharClan then
+				result = true
+			end
+		end
+	end
+
+	if cached then
+		cached.t = now
+		cached.v = result
+	else
+		TSG_TeammateCache[otherPlayer] = { t = now, v = result }
+	end
+	return result
 end
 
 local lastSmartSwing = 0
+TSG_LastSmartSwingScan = 0
 Toggles.SmartSwing:OnChanged(function()
 	disconnect("SmartSwing")
 	if updateAutoSwingSliderVisibility then
@@ -9627,13 +7824,15 @@ Toggles.SmartSwing:OnChanged(function()
 	end
 	if Toggles.SmartSwing.Value then
 		track("SmartSwing", RunService.Heartbeat:Connect(function()
+			local now = tick()
+			local speedVal = Options.AutoSwingSpeed and Options.AutoSwingSpeed.Value or 10
+			local delay = 1 / math.max(0.1, speedVal)
+			if now - lastSmartSwing < delay or now - TSG_LastSmartSwingScan < 0.08 then return end
+			TSG_LastSmartSwingScan = now
+
 			if not isAlive() then return end
 			local root = getRootPart()
 			if not root then return end
-
-			local speedVal = Options.AutoSwingSpeed and Options.AutoSwingSpeed.Value or 10
-			local delay = 1 / math.max(0.1, speedVal)
-			if tick() - lastSmartSwing < delay then return end
 
 			local pos = root.Position
 
@@ -9928,6 +8127,41 @@ Toggles.Camlock:OnChanged(function()
 			return camlockWaterCache
 		end
 
+		local function isExcludedTeam(p, ignoreAlly, excludedTeams)
+			if not ignoreAlly then return false end
+			if not p or not p.Team then return false end
+			local teamName = p.Team.Name
+			if not teamName then return false end
+			if typeof(excludedTeams) == "table" then
+				return excludedTeams[teamName] == true
+			end
+			return false
+		end
+
+		local function isSameTeamOnly(p)
+			if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team then
+				return true
+			end
+			if LocalPlayer.TeamColor and p.TeamColor and LocalPlayer.TeamColor == p.TeamColor and LocalPlayer.TeamColor ~= TSG_WHITE_BRICKCOLOR then
+				return true
+			end
+			return false
+		end
+
+		local function camlockTargetValid(p, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
+			if not p or p == LocalPlayer then return false end
+			if isCamlockBlacklisted(p) then return false end
+			local c = p.Character
+			if not c then return false end
+			if ignoreTeam and isSameTeamOnly(p) then return false end
+			if isExcludedTeam(p, ignoreAlly, excludedTeams) then return false end
+			if targetSetting ~= "All" and p.Name ~= targetSetting then return false end
+			local otherRoot = c:FindFirstChild("HumanoidRootPart")
+			local otherHum = c:FindFirstChildOfClass("Humanoid")
+			if not (otherRoot and otherHum and otherHum.Health > 0) then return false end
+			return true, otherRoot
+		end
+
 		track("Camlock", RunService.RenderStepped:Connect(function(dt)
 			if not isAlive() then return end
 			local root = getRootPart()
@@ -9968,48 +8202,9 @@ Toggles.Camlock:OnChanged(function()
 			local ignoreAlly = Toggles.CamlockIgnoreAlly and Toggles.CamlockIgnoreAlly.Value
 			local excludedTeams = Options.CamlockIgnoreTeams and Options.CamlockIgnoreTeams.Value or {}
 
-			local function isExcludedTeam(p)
-				if not ignoreAlly then return false end
-				if not p or not p.Team then return false end
-				local teamName = p.Team.Name
-				if not teamName then return false end
-				if typeof(excludedTeams) == "table" then
-					for name, selected in pairs(excludedTeams) do
-						if selected == true and name == teamName then
-							return true
-						end
-					end
-				end
-				return false
-			end
-
-			local function isSameTeamOnly(p)
-				if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team then
-					return true
-				end
-				if LocalPlayer.TeamColor and p.TeamColor and LocalPlayer.TeamColor == p.TeamColor and LocalPlayer.TeamColor ~= BrickColor.new("White") then
-					return true
-				end
-				return false
-			end
-
-			local function camlockTargetValid(p)
-				if not p or p == LocalPlayer then return false end
-				if isCamlockBlacklisted(p) then return false end
-				local c = p.Character
-				if not c then return false end
-				if ignoreTeam and isSameTeamOnly(p) then return false end
-				if isExcludedTeam(p) then return false end
-				if targetSetting ~= "All" and p.Name ~= targetSetting then return false end
-				local otherRoot = c:FindFirstChild("HumanoidRootPart")
-				local otherHum = c:FindFirstChildOfClass("Humanoid")
-				if not (otherRoot and otherHum and otherHum.Health > 0) then return false end
-				return true, otherRoot
-			end
-
 			-- Drop a cached target that died, left, or walked out of range.
 			if camlockTarget then
-				local ok, otherRoot = camlockTargetValid(camlockTarget)
+				local ok, otherRoot = camlockTargetValid(camlockTarget, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
 				if not ok or (otherRoot.Position - myPos).Magnitude > maxDist then
 					camlockTarget = nil
 				end
@@ -10021,23 +8216,21 @@ Toggles.Camlock:OnChanged(function()
 			if not camlockTarget or camlockNow >= camlockNextPick then
 				camlockNextPick = camlockNow + 0.1
 				local bestPlayer, bestDist, bestHealth, bestScore = nil, math.huge, nil, -math.huge
+				local cam = (camlockPriority == "Closest to Crosshair") and workspace.CurrentCamera or nil
 				for _, otherPlayer in ipairs(camlockPlayers) do
-					local ok, otherRoot = camlockTargetValid(otherPlayer)
+					local ok, otherRoot = camlockTargetValid(otherPlayer, ignoreTeam, ignoreAlly, excludedTeams, targetSetting)
 					if ok then
 						local dist = (otherRoot.Position - myPos).Magnitude
 						if dist <= maxDist then
 							if camlockPriority == "Lowest HP Kill" or camlockPriority == "Highest HP Kill" then
-								local hum = otherPlayer.Character and otherPlayer.Character:FindFirstChildOfClass("Humanoid")
-								local hp = hum and hum.Health or math.huge
+								local otherHum = otherPlayer.Character and otherPlayer.Character:FindFirstChildOfClass("Humanoid")
+								local hp = otherHum and otherHum.Health or math.huge
 								if bestPlayer == nil
 									or (camlockPriority == "Lowest HP Kill" and hp < bestHealth)
 									or (camlockPriority == "Highest HP Kill" and hp > bestHealth) then
 									bestPlayer, bestHealth = otherPlayer, hp
 								end
 							elseif camlockPriority == "Closest to Crosshair" then
-								-- Highest dot product with the camera's look vector
-								-- means the player is nearest the screen centre.
-								local cam = workspace.CurrentCamera
 								if cam then
 									local toTarget = otherRoot.Position - cam.CFrame.Position
 									if toTarget.Magnitude > 0.001 then
@@ -10067,7 +8260,7 @@ Toggles.Camlock:OnChanged(function()
 				local outlineTargetSetting = (Options.OutlineTarget and Options.OutlineTarget.Value) or "All"
 				for _, otherPlayer in ipairs(camlockPlayers) do
 					if otherPlayer ~= LocalPlayer and otherPlayer.Character then
-						if (not ignoreTeam or not isSameTeamOnly(otherPlayer)) and not isExcludedTeam(otherPlayer) then
+						if (not ignoreTeam or not isSameTeamOnly(otherPlayer)) and not isExcludedTeam(otherPlayer, ignoreAlly, excludedTeams) then
 							local otherRoot = otherPlayer.Character:FindFirstChild("HumanoidRootPart")
 							local otherHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
 							if otherRoot and otherHum and otherHum.Health > 0 then
@@ -10093,21 +8286,17 @@ Toggles.Camlock:OnChanged(function()
 											otherPos.Z + pushDir.Z * minOutlineStuds
 										)
 
-										pcall(function()
-											local vel = root.AssemblyLinearVelocity or root.Velocity
-											if vel then
-												local moveTowards = vel.X * (-pushDir.X) + vel.Z * (-pushDir.Z)
-												if moveTowards > 0 then
-													local correctedVel = Vector3.new(
-														vel.X - (-pushDir.X * moveTowards),
-														vel.Y,
-														vel.Z - (-pushDir.Z * moveTowards)
-													)
-													root.AssemblyLinearVelocity = correctedVel
-													root.Velocity = correctedVel
-												end
+										local vel = root.AssemblyLinearVelocity
+										if vel then
+											local moveTowards = vel.X * (-pushDir.X) + vel.Z * (-pushDir.Z)
+											if moveTowards > 0 then
+												root.AssemblyLinearVelocity = Vector3.new(
+													vel.X - (-pushDir.X * moveTowards),
+													vel.Y,
+													vel.Z - (-pushDir.Z * moveTowards)
+												)
 											end
-										end)
+										end
 									end
 								end
 							end
@@ -10154,32 +8343,23 @@ Toggles.Camlock:OnChanged(function()
 							myPos.Z + pullDir.Z * pullStep
 						)
 
-						pcall(function()
-							local maxVelAllowed = math.max(0, (currentDist - stopBoundary)) / 0.016
-							local safeVelMag = math.min(velMag, maxVelAllowed)
-							local pullVel = pullDir * safeVelMag
-							local curVel = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
-							local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
-							local curTowards = flatCur:Dot(pullDir)
-							local desiredTowards = math.max(curTowards, safeVelMag)
-							local deltaTowards = desiredTowards - curTowards
-							local newFlat = flatCur + pullDir * deltaTowards
-							local newVel = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
-							root.AssemblyLinearVelocity = newVel
-							root.Velocity = newVel
-						end)
+						local maxVelAllowed = math.max(0, (currentDist - stopBoundary)) / 0.016
+						local safeVelMag = math.min(velMag, maxVelAllowed)
+						local curVel = root.AssemblyLinearVelocity or Vector3.zero
+						local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
+						local curTowards = flatCur:Dot(pullDir)
+						local desiredTowards = math.max(curTowards, safeVelMag)
+						local deltaTowards = desiredTowards - curTowards
+						local newFlat = flatCur + pullDir * deltaTowards
+						root.AssemblyLinearVelocity = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
 					elseif currentDist <= stopBoundary and pullDir.Magnitude > 0 then
-						pcall(function()
-							local curVel = root.AssemblyLinearVelocity or root.Velocity or Vector3.zero
-							local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
-							local curTowards = flatCur:Dot(pullDir)
-							if curTowards > 0 then
-								local newFlat = flatCur - pullDir * curTowards
-								local newVel = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
-								root.AssemblyLinearVelocity = newVel
-								root.Velocity = newVel
-							end
-						end)
+						local curVel = root.AssemblyLinearVelocity or Vector3.zero
+						local flatCur = Vector3.new(curVel.X, 0, curVel.Z)
+						local curTowards = flatCur:Dot(pullDir)
+						if curTowards > 0 then
+							local newFlat = flatCur - pullDir * curTowards
+							root.AssemblyLinearVelocity = Vector3.new(newFlat.X, curVel.Y, newFlat.Z)
+						end
 					end
 				end
 			end
@@ -10339,7 +8519,7 @@ do
 
 		-- Water Bypass: for as long as the module is active the camlock slot
 		-- system stays off, so it never forces the camlock back on while swimming.
-		if isWaterBypassActive() then
+		if isWaterBypassActive(TSG_SampleInWater()) then
 			if Toggles.Camlock and Toggles.Camlock.Value then
 				Toggles.Camlock:SetValue(false)
 			end
@@ -10418,9 +8598,18 @@ do
 			if LocalPlayer.Character then
 				hookCamlockSlotChar(LocalPlayer.Character)
 			end
-			track("CamlockSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookCamlockSlotChar))
+			track("CamlockSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+				hookCamlockSlotChar(char)
+				task.delay(0.2, updateCamlockSlotSystemState)
+			end))
+			track("CamlockSlotSystem_ToolAttr", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateCamlockSlotSystemState))
 
+			local lastCLWaterPoll = 0
 			track("CamlockSlotSystem_Poll", RunService.Heartbeat:Connect(function()
+				if not (Toggles.WaterBypass and Toggles.WaterBypass.Value) then return end
+				local now = os.clock()
+				if now - lastCLWaterPoll < 0.2 then return end
+				lastCLWaterPoll = now
 				updateCamlockSlotSystemState()
 			end))
 
@@ -10579,9 +8768,14 @@ if Toggles.AutoJump then
 
 		if Toggles.AutoJump.Value then
 			local lastJumpTime = 0
+			local lastJumpScan = 0
 			local trackedPlayerJumps = {}
 
 			track("AutoJump", RunService.Heartbeat:Connect(function()
+				local nowClock = os.clock()
+				if nowClock - lastJumpScan < 0.05 then return end
+				lastJumpScan = nowClock
+
 				if not isAlive() then return end
 				local myRoot = getRootPart()
 				local myHum = getHumanoid()
@@ -10717,30 +8911,33 @@ local function phantomModeLoop(dt)
 		local orbitPosition = targetRoot.Position + Vector3.new(offsetX, phantomModeVars.orbitHeight, offsetZ)
 		myRoot.CFrame = CFrame.new(orbitPosition, targetRoot.Position)
 
-		-- Enable Kill Aura and set best weapon
+		-- Enable Kill Aura and set best weapon (throttled instead of scanning full item DB every frame)
 		if not Toggles.KillAura.Value then
 			Toggles.KillAura:SetValue(true)
 		end
 
-		-- Find and set best melee weapon
-		local bestWeaponId = getBestMeleeWeapon()
-		if bestWeaponId then
-			local wantedSlot = nil
-			local backpack = LocalPlayer:FindFirstChild("Backpack")
-			local char = LocalPlayer.Character
-			for i = 1, 10 do
-				local slotStr = tostring(i)
-				local slotTool = (backpack and backpack:FindFirstChild(slotStr)) or (char and char:FindFirstChild(slotStr))
-				if slotTool and slotTool:FindFirstChild("toolModel") then
-					local toolId = slotTool.toolModel:GetAttribute("itemId")
-					if toolId == bestWeaponId then
-						wantedSlot = slotStr
-						break
+		local nowClock = os.clock()
+		if nowClock - (phantomModeVars.lastWeaponCheck or 0) >= 1.5 then
+			phantomModeVars.lastWeaponCheck = nowClock
+			local bestWeaponId = getBestMeleeWeapon()
+			if bestWeaponId then
+				local wantedSlot = nil
+				local backpack = LocalPlayer:FindFirstChild("Backpack")
+				local char = LocalPlayer.Character
+				for i = 1, 10 do
+					local slotStr = tostring(i)
+					local slotTool = (backpack and backpack:FindFirstChild(slotStr)) or (char and char:FindFirstChild(slotStr))
+					if slotTool and slotTool:FindFirstChild("toolModel") then
+						local toolId = slotTool.toolModel:GetAttribute("itemId")
+						if toolId == bestWeaponId then
+							wantedSlot = slotStr
+							break
+						end
 					end
 				end
-			end
-			if wantedSlot and Options.KillAuraSlot and Options.KillAuraSlot.Value ~= wantedSlot then
-				Options.KillAuraSlot:SetValue(wantedSlot)
+				if wantedSlot and Options.KillAuraSlot and Options.KillAuraSlot.Value ~= wantedSlot then
+					Options.KillAuraSlot:SetValue(wantedSlot)
+				end
 			end
 		end
 	else
@@ -11033,23 +9230,22 @@ function SilentAimHK.shotWindowOpen()
 	return tick() <= (SilentAimHK.ShotUntil or 0)
 end
 
--- Keep the shot window fresh on whatever tool the player is holding.
+-- Keep the shot window fresh on whatever tool the player is holding (deduplicated per tool).
+function SilentAimHK.bindShotTool(tool)
+	if not tool or not tool:IsA("Tool") then return end
+	if tool:GetAttribute("SAHKShotBound") then return end
+	tool:SetAttribute("SAHKShotBound", true)
+	tool.Activated:Connect(function()
+		SilentAimHK.markShot()
+	end)
+end
+
 function SilentAimHK.hookShotChar(char)
 	if not char then return end
 	disconnect("SilentAimHKShotTool")
-	track("SilentAimHKShotTool", char.ChildAdded:Connect(function(child)
-		if child:IsA("Tool") then
-			child.Activated:Connect(function()
-				SilentAimHK.markShot()
-			end)
-		end
-	end))
+	track("SilentAimHKShotTool", char.ChildAdded:Connect(SilentAimHK.bindShotTool))
 	for _, child in ipairs(char:GetChildren()) do
-		if child:IsA("Tool") then
-			child.Activated:Connect(function()
-				SilentAimHK.markShot()
-			end)
-		end
+		SilentAimHK.bindShotTool(child)
 	end
 end
 
@@ -11096,12 +9292,18 @@ function SilentAimHK.isEnabled()
 	return (Toggles.SilentAimHK and Toggles.SilentAimHK.Value) == true
 end
 
--- Which of the four interception methods are switched on right now.
+-- Which of the four interception methods are switched on right now (cached; invalidated on dropdown change).
+SilentAimHK.CachedMethods = nil
+
 function SilentAimHK.getAimMethods()
+	if SilentAimHK.CachedMethods then
+		return SilentAimHK.CachedMethods
+	end
 	local selected = Options.SAHKAimMethods and Options.SAHKAimMethods.Value
 	local result = { ray = false, fire = false, invoke = false, mouse = false }
 	if type(selected) ~= "table" then
 		result.ray = true
+		SilentAimHK.CachedMethods = result
 		return result
 	end
 	for key, value in pairs(selected) do
@@ -11119,6 +9321,7 @@ function SilentAimHK.getAimMethods()
 	if not (result.ray or result.fire or result.invoke or result.mouse) then
 		result.ray = true
 	end
+	SilentAimHK.CachedMethods = result
 	return result
 end
 
@@ -11233,19 +9436,15 @@ function SilentAimHK.findTarget()
 
 	local threeSixty = (Toggles.SAHK360Mode and Toggles.SAHK360Mode.Value) or false
 	local radius = (Options.SAHKFOVRadius and Options.SAHKFOVRadius.Value) or 100
-	local range = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 10000
+	local range = (Options.SAHKTargetRange and Options.SAHKTargetRange.Value) or 500
 	local wallCheck = (Toggles.SAHKWallCheck and Toggles.SAHKWallCheck.Value) or false
 	local priority = (Options.SAHKPriorityMode and Options.SAHKPriorityMode.Value) or "Crosshair"
-	-- "All" (default) lets silent aim pick anyone; a specific name restricts it to
-	-- that one player.
-	local targetPlayer = (Options.SAHKTargetPlayer and Options.SAHKTargetPlayer.Value) or "All"
 
 	local center = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 	local bestPart, bestScore = nil, math.huge
 
 	for _, otherPlayer in ipairs(TSG_PlayerList) do
-		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer)
-			and (targetPlayer == "All" or otherPlayer.Name == targetPlayer) then
+		if otherPlayer ~= LocalPlayer and not isTeammate(otherPlayer) then
 			local otherChar = otherPlayer.Character
 			local humanoid = otherChar and otherChar:FindFirstChildOfClass("Humanoid")
 			if otherChar and humanoid and humanoid.Health > 0 and not otherChar:FindFirstChildOfClass("ForceField") then
@@ -11508,11 +9707,8 @@ function SilentAimHK.Namecall(original, ...)
 	local targetPos = SilentAimHK.predict(hitPart)
 	if not targetPos then return original(...) end
 
+	local wallBang = (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false
 	local bulletTeleport = (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) or false
-	-- Bullet Teleport drops the shot in beside the target, so it also needs the
-	-- WallBang spoof to punch through anything between the shooter and the
-	-- target; switching on either one therefore enables the wallbang behaviour.
-	local wallBang = bulletTeleport or ((Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value) or false)
 
 	if isRay then
 		local raySelf, origin, direction = ...
@@ -11750,22 +9946,24 @@ function SilentAimHK.sync()
 		track("SilentAimHKAnim", RunService.RenderStepped:Connect(function(dt)
 			SilentAimHK.stepRing(dt)
 		end))
+		local lastSampledTool = false
+		local lastSampledId = false
 		track("SilentAimHKLoop", RunService.Heartbeat:Connect(function(dt)
-			-- Refresh the WallBang water sample here, off the hook's stack, so the
-			-- intercept itself never triggers another engine call. Bullet Teleport
-			-- also uses the wallbang path, so it needs the same sample.
-			if (Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value)
-				or (Toggles.SAHKBulletTeleport and Toggles.SAHKBulletTeleport.Value) then
-				SilentAimHK.InWater = isInWater()
+			-- Refresh the WallBang water sample using the shared throttled raycast cache.
+			if Toggles.SAHKWallBang and Toggles.SAHKWallBang.Value then
+				SilentAimHK.InWater = TSG_SampleInWater()
 			end
-			-- Same idea for the mouse guard: keep the "weapon in hand" sample up to
-			-- date here so the mouse interception below never has to do item-data
-			-- lookups while the game is reading Mouse.Target.
-			SilentAimHK.HeldWeapon = IsHoldingWeapon()
-			-- Slot System sample, also refreshed off the hook's stack. With the
-			-- Slot System off this is simply true, so silent aim is unrestricted.
-			SilentAimHK.SlotAllowed = (not (Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value))
-				or isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
+			-- Only re-evaluate HeldWeapon / SlotAllowed when the held tool or equippedTool attribute changes.
+			local char = getCharacter()
+			local curTool = char and char:FindFirstChildOfClass("Tool") or nil
+			local curId = LocalPlayer:GetAttribute("equippedTool")
+			if curTool ~= lastSampledTool or curId ~= lastSampledId then
+				lastSampledTool = curTool
+				lastSampledId = curId
+				SilentAimHK.HeldWeapon = IsHoldingWeapon()
+				SilentAimHK.SlotAllowed = (not (Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value))
+					or isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
+			end
 			local responsiveness = (Options.SAHKResponsiveness and Options.SAHKResponsiveness.Value) or 0.5
 			SilentAimHK.Accum = SilentAimHK.Accum + (dt or 0)
 			if SilentAimHK.Accum < responsiveness then return end
@@ -11799,7 +9997,14 @@ end)
 
 -- The mouse hook only needs to exist while "Mouse.Hit" is selected.
 Options.SAHKAimMethods:OnChanged(function()
+	SilentAimHK.CachedMethods = nil
 	SilentAimHK.syncMouseHook()
+end)
+
+Options.SAHKSlotSystemSlot:OnChanged(function()
+	if Toggles.SAHKSlotSystem and Toggles.SAHKSlotSystem.Value then
+		SilentAimHK.SlotAllowed = isAdvanceSlotAllowed(Options.SAHKSlotSystemSlot)
+	end
 end)
 
 -- Push the new radius to the ring the moment the slider moves, so the smooth
@@ -12037,9 +10242,7 @@ do
 			local hrp = character and character:FindFirstChild("HumanoidRootPart")
 			if not hrp or not waterPlatform then return end
 			local pos = hrp.Position
-			local ok, waterHeight = pcall(function()
-				return HeightLookup.Lookup(pos, "PRECISE", false)
-			end)
+			local ok, waterHeight = pcall(HeightLookup.Lookup, pos, "PRECISE", false)
 			if ok and typeof(waterHeight) == "number" then
 				if pos.Y < waterHeight + 5 then
 					waterPlatform.CFrame = CFrame.new(pos.X, waterHeight + 0.5, pos.Z)
@@ -12424,19 +10627,28 @@ Toggles.InfiniteBackpack:OnChanged(function()
 end)
 
 local originalMountSpeeds = {}
+TSG_CachedMountSeat = nil
+TSG_CachedMountModel = nil
 
 local function getCurrentMount()
 	local humanoid = getHumanoid()
-	if humanoid and humanoid.SeatPart then
-		local seat = humanoid.SeatPart
-		local folder = seat:FindFirstAncestorOfClass("Folder")
-		if folder and folder == workspace:FindFirstChild("boats") then
-			return nil, nil
-		end
-		local mountModel = seat:FindFirstAncestorOfClass("Model")
-		return mountModel, seat
+	local seat = humanoid and humanoid.SeatPart or nil
+	if not seat then
+		TSG_CachedMountSeat = nil
+		TSG_CachedMountModel = nil
+		return nil, nil
 	end
-	return nil, nil
+	if seat == TSG_CachedMountSeat and TSG_CachedMountModel and TSG_CachedMountModel.Parent then
+		return TSG_CachedMountModel, seat
+	end
+	TSG_CachedMountSeat = seat
+	local folder = seat:FindFirstAncestorOfClass("Folder")
+	if folder and folder == workspace:FindFirstChild("boats") then
+		TSG_CachedMountModel = nil
+		return nil, nil
+	end
+	TSG_CachedMountModel = seat:FindFirstAncestorOfClass("Model")
+	return TSG_CachedMountModel, seat
 end
 
 Toggles.MountSpeedBoost:OnChanged(function()
@@ -12527,11 +10739,11 @@ Toggles.PlusSpeedBoost:OnChanged(function()
 			local root = getRootPart()
 			if not humanoid or not root then return end
 			local isSwimming = humanoid:GetState() == Enum.HumanoidStateType.Swimming or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("inWater"))
-			if not isSwimming then
+			if not isSwimming and humanoid.MoveDirection.Magnitude > 0 then
 				if isSpeedBoostSlotAllowed(Options.SpeedBoostSlot) then
 					local targetSpeed = Options.SpeedValue and Options.SpeedValue.Value or 24
 					local factor = targetSpeed - humanoid.WalkSpeed
-					if factor > 0 and humanoid.MoveDirection.Magnitude > 0 then
+					if factor > 0 then
 						LocalPlayer.Character:TranslateBy(humanoid.MoveDirection * dt * factor)
 					end
 				end
@@ -12581,11 +10793,11 @@ Toggles.SwimSlotBoost:OnChanged(function()
 			local root = getRootPart()
 			if not humanoid or not root then return end
 			local isSwimming = humanoid:GetState() == Enum.HumanoidStateType.Swimming or (LocalPlayer.Character and LocalPlayer.Character:GetAttribute("inWater"))
-			if isSwimming then
+			if isSwimming and humanoid.MoveDirection.Magnitude > 0 then
 				if isSpeedBoostSlotAllowed(Options.SwimSlotBoostSlot) then
 					local targetSpeed = Options.SwimBoostValue and Options.SwimBoostValue.Value or 30
 					local factor = targetSpeed - humanoid.WalkSpeed
-					if factor > 0 and humanoid.MoveDirection.Magnitude > 0 then
+					if factor > 0 then
 						LocalPlayer.Character:TranslateBy(humanoid.MoveDirection * dt * factor)
 					end
 				end
@@ -12755,20 +10967,68 @@ Toggles.AntiAFK:OnChanged(function()
 	end
 end)
 
+TSG_AnimSpeedConns = TSG_AnimSpeedConns or {}
+
+local function clearAnimSpeedConns()
+	disconnect("AnimSpeedPlayed")
+	for trackObj, conn in pairs(TSG_AnimSpeedConns) do
+		pcall(function() conn:Disconnect() end)
+		TSG_AnimSpeedConns[trackObj] = nil
+	end
+end
+
+local function applyAnimationSpeed(trackObj)
+	local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
+	trackObj:AdjustSpeed(targetSpeed)
+end
+
+local function setupAnimationSpeedHacks(char)
+	clearAnimSpeedConns()
+	if not (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) or not char then return end
+	local hum = char:WaitForChild("Humanoid", 10)
+	local animator = hum and hum:WaitForChild("Animator", 10)
+	if animator and Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value then
+		local function bindTrack(trackObj)
+			if not trackObj or TSG_AnimSpeedConns[trackObj] then return end
+			local adjusting = false
+			local function enforceSpeed()
+				if adjusting then return end
+				if not (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) then return end
+				local targetSpeed = (Options.SwingSpeedVal and Options.SwingSpeedVal.Value) or 1
+				if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
+					adjusting = true
+					trackObj:AdjustSpeed(targetSpeed)
+					adjusting = false
+				end
+			end
+			enforceSpeed()
+			TSG_AnimSpeedConns[trackObj] = trackObj:GetPropertyChangedSignal("Speed"):Connect(enforceSpeed)
+		end
+		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(bindTrack))
+		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
+			bindTrack(trackObj)
+		end
+	end
+end
+
 Toggles.SwingSpeedToggle:OnChanged(function()
 	if updateAutoSwingSliderVisibility then
 		updateAutoSwingSliderVisibility()
 	end
 	if Toggles.SwingSpeedToggle.Value then
 		Library:Notify({ Title = "Swing Speed", Description = "Enabled", Time = 2 })
-	end
-	local char = getCharacter()
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	local animator = hum and hum:FindFirstChild("Animator")
-	if animator then
-		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
-			local targetSpeed = Toggles.SwingSpeedToggle.Value and Options.SwingSpeedVal.Value or 1
-			trackObj:AdjustSpeed(targetSpeed)
+		if LocalPlayer.Character then
+			task.spawn(setupAnimationSpeedHacks, LocalPlayer.Character)
+		end
+	else
+		clearAnimSpeedConns()
+		local char = getCharacter()
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local animator = hum and hum:FindFirstChild("Animator")
+		if animator then
+			for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
+				trackObj:AdjustSpeed(1)
+			end
 		end
 	end
 end)
@@ -12786,41 +11046,11 @@ Options.SwingSpeedVal:OnChanged(function()
 	end
 end)
 
-local function applyAnimationSpeed(trackObj)
-	local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
-	trackObj:AdjustSpeed(targetSpeed)
-end
-
-local function setupAnimationSpeedHacks(char)
-	local hum = char:WaitForChild("Humanoid", 10)
-	local animator = hum and hum:WaitForChild("Animator", 10)
-	if animator then
-		disconnect("AnimSpeedPlayed")
-		track("AnimSpeedPlayed", animator.AnimationPlayed:Connect(function(trackObj)
-			local adjusting = false
-			local function enforceSpeed()
-				if adjusting then return end
-				local targetSpeed = (Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value) and (Options.SwingSpeedVal and Options.SwingSpeedVal.Value or 1) or 1
-				if math.abs(trackObj.Speed - targetSpeed) > 0.01 then
-					adjusting = true
-					trackObj:AdjustSpeed(targetSpeed)
-					adjusting = false
-				end
-			end
-			enforceSpeed()
-			trackObj:GetPropertyChangedSignal("Speed"):Connect(enforceSpeed)
-		end))
-		for _, trackObj in ipairs(animator:GetPlayingAnimationTracks()) do
-			applyAnimationSpeed(trackObj)
-		end
-	end
-end
-
 track("SwingCharacterAdded", LocalPlayer.CharacterAdded:Connect(function(char)
 	setupAnimationSpeedHacks(char)
 end))
 
-if LocalPlayer.Character then
+if LocalPlayer.Character and Toggles.SwingSpeedToggle and Toggles.SwingSpeedToggle.Value then
 	setupAnimationSpeedHacks(LocalPlayer.Character)
 end
 
@@ -14106,9 +12336,30 @@ function resourceNameMatches(obj, filterValue)
 	return false
 end
 
+TSG_LastAutoMineScan = 0
+TSG_LastAutoChopScan = 0
+TSG_ResourcePartCache = setmetatable({}, { __mode = "k" })
+
+function TSG_GetCachedResourcePart(obj, preferPrimary)
+	local cached = TSG_ResourcePartCache[obj]
+	if cached and cached.Parent then
+		return cached
+	end
+	local part
+	if preferPrimary then
+		part = getMineableAnchor(obj)
+	else
+		part = getChopTargetPart(obj)
+	end
+	if part then
+		TSG_ResourcePartCache[obj] = part
+	end
+	return part
+end
+
 local function mineObject(obj)
 	local slot = tonumber(Options.AutoMineSlot.Value) or 1
-	local anchor = obj and getMineableAnchor(obj)
+	local anchor = obj and TSG_GetCachedResourcePart(obj, true)
 	if anchor then
 		pcall(function()
 			TSG.MineRemote:FireServer(slot, obj, CFrame.new(anchor.Position))
@@ -14118,9 +12369,11 @@ end
 
 local function autoMine()
 	if not isAlive() or not isAutoMineRunning then return end
+	local now = tick()
 	local mineSpeed = (Options.AutoMineSpeed and Options.AutoMineSpeed.Value) or 5
 	local mineCooldown = 1 / math.max(0.1, mineSpeed)
-	if tick() - lastAutoMineHit < mineCooldown then return end
+	if now - lastAutoMineHit < mineCooldown or now - TSG_LastAutoMineScan < 0.08 then return end
+	TSG_LastAutoMineScan = now
 
 	local root = getRootPart()
 	if not root then return end
@@ -14129,7 +12382,7 @@ local function autoMine()
 	local closest, dist = nil, maxRange
 	forEachResourceNode(getMineableFolder(), function(obj)
 		if not resourceNameMatches(obj, nameFilter) then return end
-		local anchor = getMineableAnchor(obj)
+		local anchor = TSG_GetCachedResourcePart(obj, true)
 		if anchor then
 			local d = (root.Position - anchor.Position).Magnitude
 			if d < dist then
@@ -14138,7 +12391,7 @@ local function autoMine()
 		end
 	end)
 	if closest then
-		lastAutoMineHit = tick()
+		lastAutoMineHit = now
 		mineObject(closest)
 	end
 end
@@ -14168,7 +12421,7 @@ end)
 -- checkbox, which uses the harvest remote with the same range / speed / name filter.
 local function chopObject(obj)
 	local slot = tonumber(Options.AutoChopSlot.Value) or 1
-	local part = getChopTargetPart(obj)
+	local part = TSG_GetCachedResourcePart(obj, false)
 	if part then
 		pcall(function()
 			TSG.ChopRemote:FireServer(slot, obj, part.CFrame)
@@ -14178,9 +12431,11 @@ end
 
 local function autoChop()
 	if not isAlive() or not isAutoChopRunning then return end
+	local now = tick()
 	local chopSpeed = (Options.AutoChopSpeed and Options.AutoChopSpeed.Value) or 5
 	local chopCooldown = 1 / math.max(0.1, chopSpeed)
-	if tick() - lastAutoChopHit < chopCooldown then return end
+	if now - lastAutoChopHit < chopCooldown or now - TSG_LastAutoChopScan < 0.08 then return end
+	TSG_LastAutoChopScan = now
 
 	local root = getRootPart()
 	if not root then return end
@@ -14196,7 +12451,7 @@ local function autoChop()
 			if subfolder:IsA("Folder") then
 				for _, obj in ipairs(subfolder:GetChildren()) do
 					if resourceNameMatches(obj, nameFilter) then
-						local part = getChopTargetPart(obj)
+						local part = TSG_GetCachedResourcePart(obj, false)
 						if part then
 							local d = getFlatDistance(root.Position, part.Position)
 							if d < dist then
@@ -14214,7 +12469,7 @@ local function autoChop()
 	end
 
 	if didHit then
-		lastAutoChopHit = tick()
+		lastAutoChopHit = now
 	end
 end
 
@@ -14299,11 +12554,12 @@ do
 				if LocalPlayer.Character then
 					hookMineSlotChar(LocalPlayer.Character)
 				end
-				track("AutoMineSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookMineSlotChar))
-
-				track("AutoMineSlotSystem_Poll", RunService.Heartbeat:Connect(function()
-					updateMineSlotSystemState()
+				track("AutoMineSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+					hookMineSlotChar(char)
+					task.delay(0.2, updateMineSlotSystemState)
 				end))
+
+				track("AutoMineSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateMineSlotSystemState))
 
 				updateMineSlotSystemState()
 
@@ -14391,11 +12647,12 @@ do
 				if LocalPlayer.Character then
 					hookChopSlotChar(LocalPlayer.Character)
 				end
-				track("AutoChopSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookChopSlotChar))
-
-				track("AutoChopSlotSystem_Poll", RunService.Heartbeat:Connect(function()
-					updateChopSlotSystemState()
+				track("AutoChopSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+					hookChopSlotChar(char)
+					task.delay(0.2, updateChopSlotSystemState)
 				end))
+
+				track("AutoChopSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateChopSlotSystemState))
 
 				updateChopSlotSystemState()
 
@@ -14424,9 +12681,12 @@ end
 
 -- ==========================================
 local lastAiAuraHit = 0
+TSG_LastAiAuraScan = 0
 
 local function aiAuraLoop()
-	if not isAlive() or tick() - lastAiAuraHit < 0.25 then return end
+	local now = tick()
+	if now - lastAiAuraHit < 0.25 or now - TSG_LastAiAuraScan < 0.08 or not isAlive() then return end
+	TSG_LastAiAuraScan = now
 	local root = getRootPart()
 	if not root then return end
 
@@ -14558,11 +12818,12 @@ do
 				if LocalPlayer.Character then
 					hookAiAuraSlotChar(LocalPlayer.Character)
 				end
-				track("AiAuraSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(hookAiAuraSlotChar))
-
-				track("AiAuraSlotSystem_Poll", RunService.Heartbeat:Connect(function()
-					updateAiAuraSlotSystemState()
+				track("AiAuraSlotSystem_CharAdded", LocalPlayer.CharacterAdded:Connect(function(char)
+					hookAiAuraSlotChar(char)
+					task.delay(0.2, updateAiAuraSlotSystemState)
 				end))
+
+				track("AiAuraSlotSystem_Poll", LocalPlayer:GetAttributeChangedSignal("equippedTool"):Connect(updateAiAuraSlotSystemState))
 
 				updateAiAuraSlotSystemState()
 
@@ -14693,6 +12954,10 @@ do
 			if now - bossNotifyLastRefresh < 1 then return end
 			bossNotifyLastRefresh = now
 			refreshBossHooks()
+			if Connections["BossNotify_Workspace"] and Connections["BossNotify_AI_Server"]
+				and Connections["BossNotify_AI_Client"] and Connections["BossNotify_AIModels"] then
+				disconnect("BossNotify_Poll")
+			end
 		end))
 
 		Library:Notify({ Title = "Boss Spawn Notifier", Description = "Enabled", Time = 2 })
@@ -14750,15 +13015,29 @@ local function getOreColor(oreName, index)
 	return c
 end
 
+local function getOreESPContainer()
+	if oreESP.container and oreESP.container.Parent then
+		return oreESP.container
+	end
+	local parent = (typeof(getESPFolder) == "function" and getESPFolder()) or workspace
+	local folder = Instance.new("Folder")
+	folder.Name = "URIEL_OreESP_Container"
+	folder.Parent = parent
+	oreESP.container = folder
+	return folder
+end
+
 local function clearOreESPHighlights()
 	for _, entry in pairs(oreESP.highlights) do
-		pcall(function() entry.hl:Destroy() end)
-		pcall(function() entry.bill:Destroy() end)
+		pcall(function() if entry.hl then entry.hl:Destroy() end end)
+		pcall(function() if entry.bill then entry.bill:Destroy() end end)
 	end
 	table.clear(oreESP.highlights)
+	if oreESP.container then
+		pcall(function() oreESP.container:ClearAllChildren() end)
+	end
 
-	-- Safety sweep: remove any leftover ESP instances that lost their table entry,
-	-- so turning the toggle off ALWAYS hides the mineables.
+	-- Safety sweep in case any legacy instances were parented to workspace.
 	for _, child in ipairs(workspace:GetChildren()) do
 		if child.Name == oreESP.hlName or child.Name == oreESP.billName then
 			pcall(function() child:Destroy() end)
@@ -14776,7 +13055,8 @@ local lastOreESPUpdate = 0
 
 local function oreESPLoop()
 	local now = tick()
-	if now - lastOreESPUpdate < 0.5 then return end
+	local interval = (TSG_LowGraphics and TSG_LowGraphics()) and 0.8 or 0.5
+	if now - lastOreESPUpdate < interval then return end
 	lastOreESPUpdate = now
 
 	local folder = workspace:FindFirstChild("worldResources") and workspace.worldResources:FindFirstChild("mineable")
@@ -14789,8 +13069,11 @@ local function oreESPLoop()
 	local maxDist = (Options and Options.OreESPDistance and Options.OreESPDistance.Value) or 500
 	local showNames = not (Toggles and Toggles.OreESPRemoveNames and Toggles.OreESPRemoveNames.Value)
 	local chamsEnabled = (Toggles and Toggles.OreESPHighlights and Toggles.OreESPHighlights.Value) ~= false
+	local maxBillboards = (TSG_LowGraphics and TSG_LowGraphics()) and 20 or 40
 	local seen = {}
+	local candidateBillboards = {}
 	local candidateHighlights = {}
+	local container = getOreESPContainer()
 
 	for _, chunkFolder in ipairs(folder:GetChildren()) do
 		if not chunkFolder:IsA("Folder") then continue end
@@ -14799,12 +13082,13 @@ local function oreESPLoop()
 			local oreName = obj.Name or "Unknown"
 			local enabled = isOreFilterEnabled(oreName)
 
-			local anchor = obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or (obj:IsA("BasePart") and obj)
+			local existing = oreESP.highlights[obj]
+			local anchor = (existing and existing.anchor and existing.anchor.Parent) and existing.anchor
+				or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")) or (obj:IsA("BasePart") and obj))
 			local dist = anchor and (anchor.Position - rootPos).Magnitude or 9999
 
 			-- Distance and filter culling: Skip processing if disabled or out of range
 			if not enabled or dist > maxDist then
-				local existing = oreESP.highlights[obj]
 				if existing then
 					if existing.hl and existing.hl.Enabled then existing.hl.Enabled = false end
 					if existing.bill and existing.bill.Enabled then existing.bill.Enabled = false end
@@ -14814,59 +13098,27 @@ local function oreESPLoop()
 
 			seen[obj] = oreName
 			local oreColor = getOreColor(oreName)
-			local entry = oreESP.highlights[obj]
+			local entry = existing
 
 			if not entry then
-				local bill = nil
-				local lbl = nil
-				if anchor then
-					bill = Instance.new("BillboardGui")
-					bill.Name = oreESP.billName
-					bill.Size = UDim2.fromOffset(160, 28)
-					bill.AlwaysOnTop = true
-					bill.Adornee = anchor
-					bill.StudsOffset = Vector3.new(0, 3.2, 0)
-					bill.MaxDistance = maxDist
-
-					lbl = Instance.new("TextLabel")
-					lbl.Size = UDim2.fromScale(1, 1)
-					lbl.BackgroundTransparency = 1
-					lbl.TextColor3 = oreColor
-					lbl.TextStrokeTransparency = 0.4
-					lbl.Font = Enum.Font.Gotham
-					lbl.TextSize = 16
-					lbl.RichText = true
-					lbl.Text = '<font color="#' .. oreColor:ToHex() .. '">' .. oreName .. '</font>'
-					lbl.Parent = bill
-
-					bill.Enabled = showNames
-					bill.Parent = workspace
-				end
-
-				entry = { hl = nil, bill = bill, lbl = lbl, oreName = oreName, lastColor = oreColor, lastEnabled = enabled, lastShowNames = showNames, dist = dist }
+				entry = { hl = nil, bill = nil, lbl = nil, anchor = anchor, oreName = oreName, lastColor = oreColor, lastEnabled = enabled, dist = dist }
 				oreESP.highlights[obj] = entry
 			else
+				entry.anchor = anchor
 				entry.dist = dist
-				if entry.bill then
-					if entry.bill.MaxDistance ~= maxDist then
-						entry.bill.MaxDistance = maxDist
-					end
-					if entry.lastShowNames ~= showNames then
-						entry.lastShowNames = showNames
-						entry.bill.Enabled = showNames
-					end
-				end
 				if entry.lastColor ~= oreColor then
 					entry.lastColor = oreColor
 					if entry.hl then entry.hl.FillColor = oreColor end
 					if entry.lbl then
 						entry.lbl.TextColor3 = oreColor
-						entry.lbl.Text = '<font color="#' .. oreColor:ToHex() .. '">' .. oreName .. '</font>'
 					end
 				end
-				if entry.bill and entry.bill.Adornee == nil and anchor then
-					entry.bill.Adornee = anchor
-				end
+			end
+
+			if showNames and anchor then
+				table.insert(candidateBillboards, { entry = entry, anchor = anchor, color = oreColor, oreName = oreName, dist = dist })
+			elseif entry.bill and entry.bill.Enabled then
+				entry.bill.Enabled = false
 			end
 
 			if chamsEnabled and dist <= 60 then
@@ -14874,6 +13126,52 @@ local function oreESPLoop()
 			elseif entry and entry.hl and entry.hl.Enabled then
 				entry.hl.Enabled = false
 			end
+		end
+	end
+
+	-- Cap active BillboardGuis to the closest ores so large farms/mines don't flood UI rendering.
+	if #candidateBillboards > 1 then
+		table.sort(candidateBillboards, function(a, b) return a.dist < b.dist end)
+	end
+	for i, item in ipairs(candidateBillboards) do
+		local entry = item.entry
+		if i <= maxBillboards then
+			if not entry.bill then
+				local bill = Instance.new("BillboardGui")
+				bill.Name = oreESP.billName
+				bill.Size = UDim2.fromOffset(160, 24)
+				bill.AlwaysOnTop = true
+				bill.Adornee = item.anchor
+				bill.StudsOffset = Vector3.new(0, 3.2, 0)
+				bill.MaxDistance = maxDist
+
+				local lbl = Instance.new("TextLabel")
+				lbl.Size = UDim2.fromScale(1, 1)
+				lbl.BackgroundTransparency = 1
+				lbl.TextColor3 = item.color
+				lbl.TextStrokeTransparency = 0.4
+				lbl.Font = Enum.Font.Gotham
+				lbl.TextSize = 15
+				lbl.Text = item.oreName
+				lbl.Parent = bill
+
+				bill.Enabled = true
+				bill.Parent = container
+				entry.bill = bill
+				entry.lbl = lbl
+			else
+				if entry.bill.Adornee ~= item.anchor then
+					entry.bill.Adornee = item.anchor
+				end
+				if entry.bill.MaxDistance ~= maxDist then
+					entry.bill.MaxDistance = maxDist
+				end
+				if not entry.bill.Enabled then
+					entry.bill.Enabled = true
+				end
+			end
+		elseif entry.bill and entry.bill.Enabled then
+			entry.bill.Enabled = false
 		end
 	end
 
@@ -14895,7 +13193,7 @@ local function oreESPLoop()
 				hl.DepthMode = TSG_LowGraphics() and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
 				hl.Adornee = item.obj
 				hl.Enabled = true
-				hl.Parent = workspace
+				hl.Parent = container
 				entry.hl = hl
 			elseif not entry.hl.Enabled then
 				entry.hl.Enabled = true
@@ -15712,21 +14010,6 @@ VisualFPS:AddCheckbox("DisableRenderFog", {
 			-- Re-enable player shadows
 			setPlayerShadows(true)
 			disconnect("DisableRenderFog_PlayerAdded")
-			for name, _ in pairs(Connections) do
-				if typeof(name) == "string" and name:match("^DisableRenderFog_CharAdded") then
-					disconnect(name)
-				end
-			end
-		end
-	end,
-})
-
-VisualFPS:AddCheckbox("NoWaterBlur", {
-	Text = "No Water Blur",
-	Default = false,
-	Callback = function(state)
-		disconnect("NoWaterBlur_ChildAdded")
-		disconnect("NoWaterBlur_BlurChanged")
 		local lighting = game:GetService("Lighting")
 		local waterBlur = lighting:FindFirstChild("waterBlur")
 
@@ -16058,20 +14341,22 @@ do
 			disconnect("RemoveParticles_Lighting")
 
 			if state then
-				-- Process workspace & lighting smoothly in chunks without freeze/stutter
+				-- Walk workspace & lighting iteratively in chunks so toggling never hitches on GetDescendants().
 				task.spawn(function()
-					local containers = { workspace, game:GetService("Lighting") }
-					for _, container in ipairs(containers) do
-						local descendants = container:GetDescendants()
-						for i = 1, #descendants do
-							if not (Toggles.RemoveParticles and Toggles.RemoveParticles.Value) then break end
-							local v = descendants[i]
-							if v and v.Parent and PARTICLE_CLASSES[v.ClassName] then
-								disableParticle(v)
+					local stack = { workspace, game:GetService("Lighting") }
+					local processed = 0
+					while #stack > 0 do
+						if not (Toggles.RemoveParticles and Toggles.RemoveParticles.Value) then break end
+						local node = table.remove(stack)
+						for _, child in ipairs(node:GetChildren()) do
+							if PARTICLE_CLASSES[child.ClassName] then
+								disableParticle(child)
 							end
-							if i % 300 == 0 then
-								task.wait()
-							end
+							stack[#stack + 1] = child
+						end
+						processed = processed + 1
+						if processed % 300 == 0 then
+							task.wait()
 						end
 					end
 				end)
@@ -16290,11 +14575,15 @@ TSG_AntiLagGroup:AddCheckbox("PingSpoofer", {
 				for _, v in pairs(game.CoreGui.RobloxGui.PerformanceStats:GetChildren()) do
 					if v.Name == "PS_Button" and v.StatsMiniTextPanelClass.TitleLabel.Text == "Ping" then
 						local memory = v.StatsMiniTextPanelClass.ValueLabel
+						local updating = false
 						memory:GetPropertyChangedSignal("Text"):Connect(function()
+							if updating then return end
 							local active = getgenv().PingSpoofer
 							if active and active.SpoofPing then
+								updating = true
 								local random = math.random(active.StartOfPingSpoofer, active.EndOfPingSpoofer)
 								memory.Text = (random * 1.23) .. " ms"
+								updating = false
 							end
 						end)
 					end
@@ -16428,63 +14717,6 @@ function TSG_LowGraphics()
 	return (Toggles and Toggles.LowGraphics and Toggles.LowGraphics.Value) == true
 end
 
--- Extra savings on top of the per-loop throttling: switch off the Lighting
--- post-process passes (bloom, blur, depth of field, sun rays, colour grading)
--- and hide the world's shadows, which is where most of a mobile GPU's frame
--- budget goes. Their previous states are remembered so flipping Boost
--- Performance back off restores the scene exactly.
-do
-	local lowGraphicsEffects = setmetatable({}, { __mode = "k" })
-	local savedRender = nil
-
-	local function applyLowGraphicsSettings()
-		local lighting = game:GetService("Lighting")
-		if TSG_LowGraphics() then
-			if not savedRender then
-				savedRender = {
-					GlobalShadows = lighting.GlobalShadows,
-					EnvironmentDiffuseScale = lighting.EnvironmentDiffuseScale,
-					EnvironmentSpecularScale = lighting.EnvironmentSpecularScale,
-				}
-			end
-			for _, v in ipairs(lighting:GetChildren()) do
-				if v:IsA("PostEffect") and lowGraphicsEffects[v] == nil then
-					lowGraphicsEffects[v] = v.Enabled
-					v.Enabled = false
-				end
-			end
-			lighting.GlobalShadows = false
-			lighting.EnvironmentDiffuseScale = 0
-			lighting.EnvironmentSpecularScale = 0
-		else
-			for effect, wasEnabled in pairs(lowGraphicsEffects) do
-				if effect and effect.Parent then
-					effect.Enabled = wasEnabled
-				end
-			end
-			lowGraphicsEffects = setmetatable({}, { __mode = "k" })
-			if savedRender then
-				lighting.GlobalShadows = savedRender.GlobalShadows
-				lighting.EnvironmentDiffuseScale = savedRender.EnvironmentDiffuseScale
-				lighting.EnvironmentSpecularScale = savedRender.EnvironmentSpecularScale
-				savedRender = nil
-			end
-		end
-	end
-
-	-- Keep working if a post effect is added while Boost is on.
-	track("LowGraphics_LightingAdded", game:GetService("Lighting").ChildAdded:Connect(function(v)
-		if TSG_LowGraphics() and v:IsA("PostEffect") and lowGraphicsEffects[v] == nil then
-			lowGraphicsEffects[v] = v.Enabled
-			v.Enabled = false
-		end
-	end))
-
-	if Toggles.LowGraphics then
-		Toggles.LowGraphics:OnChanged(applyLowGraphicsSettings)
-	end
-end
-
 local espObjects = {}
 -- Cached list of the other players, so the per-frame ESP loop never rebuilds it.
 -- Refreshed only when someone joins or leaves.
@@ -16521,7 +14753,13 @@ local function getESPFolder()
 	return espFolder or workspace
 end
 
+TSG_ESPCharConns = TSG_ESPCharConns or {}
+
 local function removePlayerESP(player)
+	if TSG_ESPCharConns[player] then
+		pcall(function() TSG_ESPCharConns[player]:Disconnect() end)
+		TSG_ESPCharConns[player] = nil
+	end
 	local entry = espObjects[player]
 	if entry then
 		if entry.billboard then pcall(function() entry.billboard:Destroy() end) end
@@ -16533,6 +14771,12 @@ local function removePlayerESP(player)
 end
 
 local function clearESP()
+	for player in pairs(TSG_ESPCharConns) do
+		if TSG_ESPCharConns[player] then
+			pcall(function() TSG_ESPCharConns[player]:Disconnect() end)
+			TSG_ESPCharConns[player] = nil
+		end
+	end
 	for player in pairs(espObjects) do
 		removePlayerESP(player)
 	end
@@ -16750,6 +14994,7 @@ local function updateAllESP()
 	local showHpText = (Toggles and Toggles.ShowHealthText and Toggles.ShowHealthText.Value) or false
 	local outlineEnabled = (Toggles.OutlineESP and Toggles.OutlineESP.Value) or false
 	local boxEnabled = (Toggles and Toggles.BoxESP and Toggles.BoxESP.Value) or false
+	local camera = boxEnabled and workspace.CurrentCamera or nil
 
 	for _, player in ipairs(espPlayerList) do
 		if player ~= LocalPlayer then
@@ -16795,7 +15040,6 @@ local function updateAllESP()
 						entry.box = createBoxDrawing()
 					end
 					local box = entry.box
-					local camera = workspace.CurrentCamera
 					if box then
 						if camera and inRange then
 							local top = camera:WorldToViewportPoint(entry.root.Position + Vector3.new(0, 3, 0))
@@ -16918,9 +15162,8 @@ Toggles.PlayerESP:OnChanged(function()
 
 	for _, player in ipairs(espPlayerList) do
 		if player ~= LocalPlayer then
-			local entry = espObjects[player] or {}
-			if entry.charCon then entry.charCon:Disconnect() end
-			entry.charCon = player.CharacterAdded:Connect(function()
+			if TSG_ESPCharConns[player] then TSG_ESPCharConns[player]:Disconnect() end
+			TSG_ESPCharConns[player] = player.CharacterAdded:Connect(function()
 				task.wait(0.2)
 				if Toggles.PlayerESP and Toggles.PlayerESP.Value then
 					getOrCreateESP(player)
@@ -16931,7 +15174,8 @@ Toggles.PlayerESP:OnChanged(function()
 
 	track("ESP_PlayerAdded", Players.PlayerAdded:Connect(function(player)
 		refreshESPPlayerList()
-		player.CharacterAdded:Connect(function()
+		if TSG_ESPCharConns[player] then TSG_ESPCharConns[player]:Disconnect() end
+		TSG_ESPCharConns[player] = player.CharacterAdded:Connect(function()
 			task.wait(0.2)
 			if Toggles.PlayerESP and Toggles.PlayerESP.Value then
 				getOrCreateESP(player)
@@ -17031,9 +15275,15 @@ do
 		for _, player in ipairs(TSG_PlayerList) do
 			if player ~= LocalPlayer then
 				local char = player.Character
-				local root = char and char:FindFirstChild("HumanoidRootPart")
-				local hum = char and char:FindFirstChildOfClass("Humanoid")
 				local entry = speedESPs[player]
+				local root, hum
+				if entry and entry.char == char and entry.root and entry.root.Parent and entry.hum then
+					root = entry.root
+					hum = entry.hum
+				else
+					root = char and char:FindFirstChild("HumanoidRootPart")
+					hum = char and char:FindFirstChildOfClass("Humanoid")
+				end
 
 				if not root or not hum or hum.Health <= 0 or not char.Parent then
 					if entry and entry.billboard.Enabled then
@@ -17045,6 +15295,11 @@ do
 					if not entry or entry.root ~= root or not entry.billboard.Parent then
 						destroySpeedEntry(player)
 						entry = createSpeedEntry(player, root)
+						entry.char = char
+						entry.hum = hum
+					else
+						entry.char = char
+						entry.hum = hum
 					end
 
 					local dist = myPos and (root.Position - myPos).Magnitude or 0
@@ -17291,9 +15546,11 @@ do
 
 	local function updateBossESP()
 		local now = tick()
-		if now - bossLastRefresh >= 1 then
-			bossLastRefresh = now
-			refreshBossHooks()
+		if not (Connections["BossESP_Added_AI_Server"] and Connections["BossESP_Added_AI_Client"]) then
+			if now - bossLastRefresh >= 1 then
+				bossLastRefresh = now
+				refreshBossHooks()
+			end
 		end
 
 		-- Nothing tracked: one lookup and out. This is the usual case, so the
@@ -17566,25 +15823,6 @@ end
 -- Fallback builder: a camera-following grid of cloned sky cells.
 function TSG_BuildWeatherGrid(config)
 	local template
-	if config.Build then
-		template = TSG_MakeSandPart(Vector3.new(config.Cell, config.Height, config.Cell))
-	else
-		local controller = TSG_GetWeatherController(false)
-		local module = controller and controller:FindFirstChild(config.Template or config.Module)
-		template = module and module:FindFirstChild(config.SkyPart)
-		if not template then
-			return false
-		end
-	end
-
-	local folder = Instance.new("Folder")
-	folder.Name = "TSG_WeatherOverride"
-	folder.Parent = workspace
-	WeatherOverrideFolder = folder
-
-	local cells = {}
-	-- 7x7 cells normally, 5x5 in Boost Performance: fewer particle emitters to render.
-	local radius = TSG_LowGraphics() and 2 or 3
 	local size = Vector3.new(config.Cell, config.Height, config.Cell)
 	for offsetX = -radius, radius do
 		for offsetZ = -radius, radius do
@@ -17608,13 +15846,13 @@ function TSG_BuildWeatherGrid(config)
 	end
 
 	local lastCellPos = nil
+	local moveThreshold = math.max(2, config.Cell * 0.5)
 	WeatherOverrideConnection = RunService.RenderStepped:Connect(function()
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local base = camera.CFrame.Position
-		-- Only rewrite the cells when the camera actually moved. Standing still
-		-- (common on mobile) then costs nothing instead of ~49 CFrame writes a frame.
-		if lastCellPos and (base - lastCellPos).Magnitude < 0.25 then return end
+		-- Only rewrite the cells when the camera moves significantly, cutting ~49 CFrame writes/frame.
+		if lastCellPos and (base - lastCellPos).Magnitude < moveThreshold then return end
 		lastCellPos = base
 		for _, cell in ipairs(cells) do
 			cell.Part.CFrame = CFrame.new(base.X + cell.X, base.Y + config.Offset, base.Z + cell.Z)
@@ -17693,9 +15931,9 @@ local function applyClearWeather(state)
 		local function disableWeatherParticles(parent)
 			if not parent then return end
 			for _, obj in ipairs(parent:GetDescendants()) do
-				if obj:IsA("ParticleEmitter") then
+				if obj.ClassName == "ParticleEmitter" then
 					local name = obj.Name:lower()
-					if name:find("rain") or name:find("snow") or name:find("storm") or name:find("fog") or name:find("cloud") or name:find("weather") or name:find("drop") then
+					if name:find("rain", 1, true) or name:find("snow", 1, true) or name:find("storm", 1, true) or name:find("fog", 1, true) or name:find("cloud", 1, true) or name:find("weather", 1, true) or name:find("drop", 1, true) then
 						pcall(function() obj.Enabled = false end)
 					end
 				end
@@ -17709,9 +15947,9 @@ local function applyClearWeather(state)
 
 		disconnect("ClearWeather_DescendantAdded")
 		track("ClearWeather_DescendantAdded", workspace.DescendantAdded:Connect(function(desc)
-			if Toggles.ClearWeather and Toggles.ClearWeather.Value and desc:IsA("ParticleEmitter") then
+			if Toggles.ClearWeather and Toggles.ClearWeather.Value and desc.ClassName == "ParticleEmitter" then
 				local name = desc.Name:lower()
-				if name:find("rain") or name:find("snow") or name:find("storm") or name:find("fog") or name:find("cloud") or name:find("weather") or name:find("drop") then
+				if name:find("rain", 1, true) or name:find("snow", 1, true) or name:find("storm", 1, true) or name:find("fog", 1, true) or name:find("cloud", 1, true) or name:find("weather", 1, true) or name:find("drop", 1, true) then
 					pcall(function() desc.Enabled = false end)
 				end
 			end
@@ -17873,17 +16111,6 @@ local function updateAttachPlayerList()
 		end
 	end)
 	pcall(function()
-		if Options.SAHKTargetPlayer then
-			local current = Options.SAHKTargetPlayer.Value
-			Options.SAHKTargetPlayer:SetValues(kaList)
-			if table.find(kaList, current) then
-				Options.SAHKTargetPlayer:SetValue(current)
-			else
-				Options.SAHKTargetPlayer:SetValue("All")
-			end
-		end
-	end)
-	pcall(function()
 		if Options.ReachIgnore then
 			-- Names that left the server drop off, the ones still here stay picked.
 			local previous = Options.ReachIgnore.Value
@@ -17970,15 +16197,24 @@ task.spawn(updateCamlockPlayerList)
 local function startAttach()
 	disconnect("AttachLoop")
 	if Toggles.AttachToggle.Value then
+		local cachedName, cachedPlayer, cachedChar, cachedRoot = nil, nil, nil, nil
 		track("AttachLoop", RunService.Heartbeat:Connect(function()
 			if not Toggles.AttachToggle.Value then return end
 			local targetName = Options.AttachPlayerList.Value
 			if not targetName or targetName == "" then return end
 
-			local targetPlayer = Players:FindFirstChild(targetName)
-			local targetChar = targetPlayer and targetPlayer.Character
-			local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-			local char = getCharacter()
+			if targetName ~= cachedName or not cachedPlayer or not cachedPlayer.Parent then
+				cachedName = targetName
+				cachedPlayer = Players:FindFirstChild(targetName)
+				cachedChar = nil
+				cachedRoot = nil
+			end
+			local targetChar = cachedPlayer and cachedPlayer.Character
+			if targetChar ~= cachedChar or not cachedRoot or not cachedRoot.Parent then
+				cachedChar = targetChar
+				cachedRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+			end
+			local targetRoot = cachedRoot
 			local myRoot = getRootPart()
 
 			if targetRoot and myRoot and isAlive() then
@@ -17996,7 +16232,7 @@ local function startAttach()
 				else
 					myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, attachDist) -- Behind player
 				end
-				myRoot.Velocity = Vector3.zero
+				myRoot.AssemblyLinearVelocity = Vector3.zero
 			end
 		end))
 	end
@@ -18083,12 +16319,23 @@ task.spawn(updateSpectatePlayerList)
 local function startSpectate()
 	disconnect("SpectateLoop")
 	if Toggles.SpectateToggle.Value then
+		local cachedName, cachedPlayer, cachedChar, cachedHum = nil, nil, nil, nil
 		track("SpectateLoop", RunService.Heartbeat:Connect(function()
 			if not Toggles.SpectateToggle.Value then return end
 
 			local targetName = Options.SpectatePlayerList.Value
-			local targetPlayer = targetName and Players:FindFirstChild(targetName)
-			local targetHum = targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if targetName ~= cachedName or not cachedPlayer or not cachedPlayer.Parent then
+				cachedName = targetName
+				cachedPlayer = targetName and Players:FindFirstChild(targetName) or nil
+				cachedChar = nil
+				cachedHum = nil
+			end
+			local targetChar = cachedPlayer and cachedPlayer.Character
+			if targetChar ~= cachedChar or not cachedHum or not cachedHum.Parent then
+				cachedChar = targetChar
+				cachedHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid") or nil
+			end
+			local targetHum = cachedHum
 			local camera = workspace.CurrentCamera
 
 			if targetHum then
@@ -18161,7 +16408,7 @@ end
 function getMoveVector()
 	local controls = FreecamState.controls
 	if controls then
-		local ok, v = pcall(function() return controls:GetMoveVector() end)
+		local ok, v = pcall(controls.GetMoveVector, controls)
 		if ok and typeof(v) == "Vector3" and v.Magnitude > 0 then
 			return v
 		end
@@ -18172,10 +16419,14 @@ end
 -- The default mobile joystick sits under PlayerGui.TouchGui. Touches that start
 -- there are movement, not camera, so they must not swing the view.
 function isJoystickTouch(position)
-	local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-	local touchGui = playerGui and playerGui:FindFirstChild("TouchGui")
-	if not touchGui then return false end
-	local frame = touchGui:FindFirstChild("ThumbstickFrame", true)
+	local frame = FreecamState.thumbstickFrame
+	if not frame or not frame.Parent then
+		local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+		local touchGui = playerGui and playerGui:FindFirstChild("TouchGui")
+		if not touchGui then return false end
+		frame = touchGui:FindFirstChild("ThumbstickFrame", true)
+		FreecamState.thumbstickFrame = frame
+	end
 	if not frame then return false end
 	local topLeft = frame.AbsolutePosition
 	local size = frame.AbsoluteSize
@@ -18439,17 +16690,32 @@ local function onInvisibleFlyToggle(state)
 				end)
 			end
 
+			local cloneRoot = invisibleFlyVars.playerClone:FindFirstChild("HumanoidRootPart")
+			if cloneRoot then
+				cloneRoot.Anchored = true
+			end
+			local lastFill = Options.InvisibleFlyFillColor.Value
+			local lastOutline = Options.InvisibleFlyOutlineColor.Value
+
 			while invisibleFlyVars.invisiblefly do
 				RunService.Heartbeat:Wait()
 
-				if not (invisibleFlyVars.playerClone and invisibleFlyVars.playerClone:FindFirstChild("HumanoidRootPart")) then
+				if not (invisibleFlyVars.playerClone and cloneRoot and cloneRoot.Parent) then
 					break
 				end
-				
-				-- Update highlight colors in real-time
+
+				-- Only update Highlight colors when they actually changed.
 				if invisibleFlyVars.highlight then
-					invisibleFlyVars.highlight.FillColor = Options.InvisibleFlyFillColor.Value
-					invisibleFlyVars.highlight.OutlineColor = Options.InvisibleFlyOutlineColor.Value
+					local fill = Options.InvisibleFlyFillColor.Value
+					local outline = Options.InvisibleFlyOutlineColor.Value
+					if fill ~= lastFill then
+						lastFill = fill
+						invisibleFlyVars.highlight.FillColor = fill
+					end
+					if outline ~= lastOutline then
+						lastOutline = outline
+						invisibleFlyVars.highlight.OutlineColor = outline
+					end
 				end
 
 				local root = getRootPart()
@@ -18460,37 +16726,28 @@ local function onInvisibleFlyToggle(state)
 				end
 
 				invisibleFlyVars.didFly = true
-				workspace.CurrentCamera.CameraSubject = invisibleFlyVars.playerClone:FindFirstChild("Humanoid") or hum
+				local cam = workspace.CurrentCamera
+				local targetSubj = cloneHum or hum
+				if cam.CameraSubject ~= targetSubj then
+					cam.CameraSubject = targetSubj
+				end
 				hum:ChangeState("Climbing")
 				LocalPlayer.Character:PivotTo(invisibleFlyVars.playerClone:GetPivot() + Vector3.new(0, 500, 0))
-				root.Velocity = Vector3.zero
+				root.AssemblyLinearVelocity = Vector3.zero
 
-				local lookPosition = workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 9999
-
-				invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
-					invisibleFlyVars.playerClone.HumanoidRootPart.Position,
-					Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
-				)
-				invisibleFlyVars.playerClone.HumanoidRootPart.Anchored = true
-
-				invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
-					invisibleFlyVars.playerClone.HumanoidRootPart.Position + hum.MoveDirection / 10 * Options.InvisibleFlySpeedSlider.Value,
-					Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
-				)
-
+				local camCF = cam.CFrame
+				local lookPosition = camCF.Position + camCF.LookVector * 9999
+				local nextPos = cloneRoot.Position + hum.MoveDirection / 10 * Options.InvisibleFlySpeedSlider.Value
 				if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-					invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
-						invisibleFlyVars.playerClone.HumanoidRootPart.Position + Vector3.new(0, 0.2, 0),
-						Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
-					)
+					nextPos = nextPos + Vector3.new(0, 0.2, 0)
 				end
-
 				if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-					invisibleFlyVars.playerClone.HumanoidRootPart.CFrame = CFrame.new(
-						invisibleFlyVars.playerClone.HumanoidRootPart.Position - Vector3.new(0, 0.2, 0),
-						Vector3.new(lookPosition.X, invisibleFlyVars.playerClone.HumanoidRootPart.Position.Y, lookPosition.Z)
-					)
+					nextPos = nextPos - Vector3.new(0, 0.2, 0)
 				end
+				cloneRoot.CFrame = CFrame.new(
+					nextPos,
+					Vector3.new(lookPosition.X, nextPos.Y, lookPosition.Z)
+				)
 			end
 
 			-- Land the body back where the clone was, then clear it, so turning the
@@ -18552,6 +16809,7 @@ end
 
 Toggles.QuickVanish:OnChanged(function()
 	disconnect("QuickVanish")
+	disconnect("QuickVanish_CharAdded")
 	quickVanishTriggered = false
 	local qvVisible = Toggles.QuickVanish.Value
 	if Options.QuickVanishThreshold then
@@ -18567,7 +16825,19 @@ Toggles.QuickVanish:OnChanged(function()
 		pcall(function() PlayerTabBox:Resize() end)
 	end
 	if Toggles.QuickVanish.Value then
-		track("QuickVanish", RunService.Heartbeat:Connect(checkQuickVanish))
+		local function hookQuickVanishChar(char)
+			disconnect("QuickVanish")
+			if not char then return end
+			local hum = char:WaitForChild("Humanoid", 5)
+			if hum and Toggles.QuickVanish and Toggles.QuickVanish.Value then
+				track("QuickVanish", hum.HealthChanged:Connect(checkQuickVanish))
+				checkQuickVanish()
+			end
+		end
+		if LocalPlayer.Character then
+			task.spawn(hookQuickVanishChar, LocalPlayer.Character)
+		end
+		track("QuickVanish_CharAdded", LocalPlayer.CharacterAdded:Connect(hookQuickVanishChar))
 		Library:Notify({ Title = "Quick Vanish", Description = "Enabled", Time = 2 })
 	else
 		Library:Notify({ Title = "Quick Vanish", Description = "Disabled", Time = 2 })
@@ -18600,69 +16870,6 @@ task.spawn(updateTeleportPlayerList)
 -- ==========================================
 -- UI SETTINGS
 -- ==========================================
--- Background transparency helpers. Kept global on purpose: the main chunk is at
--- Luau's 200-local register limit, so these must not add any new locals.
-TSG_BackgroundTransparencyCache = TSG_BackgroundTransparencyCache or {}
-
--- Applies `target` transparency to a single instance, remembering the library's
--- own value the first time so "0%" restores it exactly.
-function TSG_ApplyInstanceTransparency(instance, target)
-	if not instance then
-		return
-	end
-
-	if TSG_BackgroundTransparencyCache[instance] == nil then
-		TSG_BackgroundTransparencyCache[instance] = instance.BackgroundTransparency
-	end
-
-	local original = TSG_BackgroundTransparencyCache[instance]
-	instance.BackgroundTransparency = original + (1 - original) * target
-end
-
--- "UI Transparency": fades the window backdrop itself, including the tab-content
--- frame that sits behind the groupboxes.
-function TSG_ApplyUIBackgroundTransparency(alpha)
-	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
-
-	local mainFrame = Library.Window and Library.Window.MainFrame
-	if not mainFrame then
-		return
-	end
-
-	TSG_ApplyInstanceTransparency(mainFrame, alpha)
-
-	-- The frame behind the groupboxes is drawn on top of MainFrame, so a plain alpha
-	-- there would still let the window colour show through it and it would keep looking
-	-- solid. It gets the same compounded alpha as the panels so the backdrop behind the
-	-- groupboxes fades along with the rest of the window.
-	TSG_ApplyInstanceTransparency(Library.WindowContainer, 1 - (1 - alpha) ^ 8)
-end
-
--- "Background Color Transparency": fades everything painted with the library's
--- "BackgroundColor" scheme -- the groupboxes, sidebar and tabboxes inside the
--- window, plus the popup menus (dropdown lists, right-click menus, tooltips).
-function TSG_ApplyBackgroundColorTransparency(alpha)
-	alpha = math.clamp(tonumber(alpha) or 0, 0, 1)
-
-	local mainFrame = Library.Window and Library.Window.MainFrame
-
-	-- Those panels are drawn *inside* the window, on top of the already-transparent
-	-- backdrop. Applying the plain alpha there would just let the window colour show
-	-- through them and they would still look solid, so nested panels get a compounded
-	-- alpha that reveals the game at a similar rate as the backdrop behind them.
-	local panelAlpha = 1 - (1 - alpha) ^ 8
-
-	for instance, properties in Library.Registry do
-		if properties.BackgroundColor3 == "BackgroundColor" then
-			if mainFrame and instance:IsDescendantOf(mainFrame) then
-				TSG_ApplyInstanceTransparency(instance, panelAlpha)
-			else
-				TSG_ApplyInstanceTransparency(instance, alpha)
-			end
-		end
-	end
-end
-
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("MENU", "wrench")
 
 MenuGroup:AddToggle("KeybindMenuOpen", {
@@ -18716,32 +16923,6 @@ MenuGroup:AddSlider("UICornerSlider", {
 	end
 })
 
-MenuGroup:AddSlider("UIBackgroundTransparency", {
-	Text = "UI Transparency",
-	Default = 25,
-	Min = 0,
-	Max = 100,
-	Rounding = 0,
-	Suffix = "%",
-	Compact = true,
-	Callback = function(value)
-		TSG_ApplyUIBackgroundTransparency(value / 100)
-	end
-})
-
-MenuGroup:AddSlider("UIBackgroundColorTransparency", {
-	Text = "Background Color Transparency",
-	Default = 10,
-	Min = 0,
-	Max = 100,
-	Rounding = 0,
-	Suffix = "%",
-	Compact = true,
-	Callback = function(value)
-		TSG_ApplyBackgroundColorTransparency(value / 100)
-	end
-})
-
 MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
 	Default = "RightShift",
 	NoUI = true,
@@ -18755,14 +16936,12 @@ end)
 Library.ToggleKeybind = Options.MenuKeybind
 
 ThemeManager:SetLibrary(Library)
--- Set default color scheme
+-- Set default accent and outline color
 ThemeManager:SetDefaultTheme({
-	AccentColor = "18e0e0", -- RGB(24, 224, 224)
-	OutlineColor = "0b2024", -- RGB(11, 32, 36)
-	MainColor = "1a2a34", -- RGB(28, 43, 54)
-	BackgroundColor = "16232a", -- RGB(22, 35, 42)
-	FontColor = "d8dde9", -- RGB(216, 221, 233)
-	FontFace = "Jura" -- default font face (was Code)
+	AccentColor = "ff0000", -- RGB(255, 0, 0)
+	OutlineColor = "232929", -- RGB(35, 41, 41)
+	MainColor = "1a2222", -- RGB(26, 34, 34)
+	BackgroundColor = "0d1717" -- RGB(13, 23, 23)
 })
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
@@ -18773,12 +16952,6 @@ SaveManager:SetFolder("TSG/TheSurvivalGame")
 SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 SaveManager:LoadAutoloadConfig()
-
--- Obsidian only runs a slider's Callback on changes, so the default transparency
--- values are applied here once every panel and menu exists (and after a saved
--- config, if any, has already overridden the slider values).
-TSG_ApplyUIBackgroundTransparency(Options.UIBackgroundTransparency.Value / 100)
-TSG_ApplyBackgroundColorTransparency(Options.UIBackgroundColorTransparency.Value / 100)
 
 Library:OnUnload(function()
 	if Toggles.Reach and Toggles.Reach.Value then
@@ -18801,6 +16974,9 @@ Library:OnUnload(function()
 	end
 	if Toggles.InfiniteBackpack and Toggles.InfiniteBackpack.Value then
 		Toggles.InfiniteBackpack:SetValue(false)
+	end
+	if Toggles.Noclip and Toggles.Noclip.Value then
+		Toggles.Noclip:SetValue(false)
 	end
 
 	if Toggles.NoWaterBlur and Toggles.NoWaterBlur.Value then
