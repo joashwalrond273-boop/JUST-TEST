@@ -6006,10 +6006,6 @@ MainLeft:AddCheckbox("InfiniteStamina", {
 MainLeft:AddCheckbox("InfiniteJump", {
 	Text = "Infinite Jump",
 	Default = false,
-
-MainLeft:AddCheckbox("Noclip", {
-	Text = "Noclip",
-	Default = false,
 })
 
 MainLeft:AddCheckbox("WalkOnWater", {
@@ -11990,32 +11986,6 @@ task.spawn(function()
 	task.wait(0.05)
 	if updateSwimBoostVisibility then
 		updateSwimBoostVisibility()
-	end
-end)
-
-local noclipParts = {}
-Toggles.Noclip:OnChanged(function()
-	disconnect("Noclip")
-	table.clear(noclipParts)
-	if Toggles.Noclip.Value then
-		track("Noclip", RunService.Stepped:Connect(function()
-			local character = getCharacter()
-			if not character then
-				return
-			end
-			for _, part in ipairs(character:GetDescendants()) do
-				if part:IsA("BasePart") and part.CanCollide then
-					part.CanCollide = false
-					noclipParts[part] = true
-				end
-			end
-		end))
-	else
-		for part in pairs(noclipParts) do
-			if part.Parent then
-				part.CanCollide = true
-			end
-		end
 	end
 end)
 
